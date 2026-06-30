@@ -26,7 +26,9 @@ yarn-debug.log*
 yarn-error.log*
 
 # local env files
+.env
 .env*.local
+
 
 # vercel
 .vercel
@@ -34,3 +36,13 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+/prisma/dev.db
+
+# migration / seed / debug scripts (local only — others restore via dev.db copy)
+/scripts/
+pm-snapshot.json
+
+# docker (local deploy tooling)
+Dockerfile
+.dockerignore

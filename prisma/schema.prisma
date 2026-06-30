@@ -1,0 +1,231 @@
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model BankAccount {
+  id             Int             @id @default(autoincrement())
+  name           String
+  accountNumber  String?
+  color          String          @default("#6366f1")
+  jars             Jar[]
+  expenses         Expense[]
+  expenseMasters   ExpenseMaster[]
+  jarAllocations   JarAllocation[]
+  bankTransfers    MonthlyBankTransfer[]
+  paymentMethods   PaymentMethod[]
+  unassignedMonths MonthlyRecord[]
+}
+
+model ExpenseMaster {
+  id               Int                @id @default(autoincrement())
+  name             String
+  defaultJarCode   String?
+  bankAccountId    Int?
+  bankAccount      BankAccount?       @relation(fields: [bankAccountId], references: [id], onDelete: SetNull)
+  sortOrder        Int                @default(0)
+  recurring        RecurringExpense[]
+  installmentPlans InstallmentPlan[]
+}
+
+model InstallmentPlan {
+  id                Int                @id @default(autoincrement())
+  expenseMasterId   Int
+  expenseMaster     ExpenseMaster      @relation(fields: [expenseMasterId], references: [id])
+  principalAmount   Float
+  totalInstallments Int
+  interestRate      Float              @default(0)
+  interestUnit      String             @default("month")
+  paymentMethodId   Int?
+  paymentMethod     PaymentMethod?     @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
+  startDate         DateTime
+  note              String?
+  sortOrder         Int                @default(0)
+  items             RecurringExpense[]
+}
+
+model RecurringExpense {
+  id                Int              @id @default(autoincrement())
+  expenseMasterId   Int
+  expenseMaster     ExpenseMaster    @relation(fields: [expenseMasterId], references: [id], onDelete: Cascade)
+  amount            Float
+  startDate         DateTime?
+  endDate           DateTime?
+  paymentMethodId   Int?
+  paymentMethod     PaymentMethod?   @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
+  sortOrder         Int              @default(0)
+  note              String?
+  intervalValue     Int              @default(1)
+  intervalUnit      String           @default("month")
+  installmentPlanId Int?
+  installmentPlan   InstallmentPlan? @relation(fields: [installmentPlanId], references: [id], onDelete: Cascade)
+  installmentNumber Int?
+  expenses          Expense[]
+}
+
+model Jar {
+  id            Int             @id @default(autoincrement())
+  name          String
+  code          String          @unique
+  jarType       String          @default("a")
+  bankAccountId Int?
+  bankAccount   BankAccount?    @relation(fields: [bankAccountId], references: [id])
+  percentage    Float           @default(0)
+  rules         String?
+  isNec         Boolean         @default(false)
+  sortOrder     Int             @default(0)
+  allocations   JarAllocation[]
+}
+
+model MonthlyRecord {
+  id                 Int                        @id @default(autoincrement())
+  year               Int
+  month              Int
+  necAmount          Float                      @default(0)
+  necIsManual        Boolean                    @default(false)
+  reconciled         Boolean                    @default(false)
+  unassignedBankAccountId Int?
+  unassignedBankAccount   BankAccount?          @relation(fields: [unassignedBankAccountId], references: [id], onDelete: SetNull)
+  allocations        JarAllocation[]
+  expenses           Expense[]
+  deductions         MonthlyDeduction[]
+  monthlyIncomes     MonthlyIncome[]
+  paymentSettlements MonthlyPaymentSettlement[]
+  bankTransfers      MonthlyBankTransfer[]
+
+  @@unique([year, month])
+}
+
+model IncomeType {
+  id             Int             @id @default(autoincrement())
+  name           String
+  code           String          @unique
+  excludeFromNet Boolean         @default(false)
+  sortOrder      Int             @default(0)
+  monthlyIncomes MonthlyIncome[]
+}
+
+model PaymentMethod {
+  id                 Int                        @id @default(autoincrement())
+  name               String
+  code               String                     @unique
+  sortOrder          Int                        @default(0)
+  bankAccountId      Int?
+  bankAccount        BankAccount?               @relation(fields: [bankAccountId], references: [id], onDelete: SetNull)
+  createdAt          DateTime                   @default(now())
+  expenses           Expense[]
+  recurringExpenses  RecurringExpense[]
+  installmentPlans   InstallmentPlan[]
+  monthlySettlements MonthlyPaymentSettlement[]
+}
+
+model MonthlyPaymentSettlement {
+  id              Int           @id @default(autoincrement())
+  monthlyRecordId Int
+  monthlyRecord   MonthlyRecord @relation(fields: [monthlyRecordId], references: [id], onDelete: Cascade)
+  paymentMethodId Int
+  paymentMethod   PaymentMethod @relation(fields: [paymentMethodId], references: [id], onDelete: Cascade)
+  paidAt          DateTime?
+  reconciledAt    DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@unique([monthlyRecordId, paymentMethodId])
+}
+
+model MonthlyBankTransfer {
+  id              Int           @id @default(autoincrement())
+  monthlyRecordId Int
+  monthlyRecord   MonthlyRecord @relation(fields: [monthlyRecordId], references: [id], onDelete: Cascade)
+  bankAccountId   Int
+  bankAccount     BankAccount   @relation(fields: [bankAccountId], references: [id], onDelete: Cascade)
+  transferredAt   DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  @@unique([monthlyRecordId, bankAccountId])
+}
+
+model MonthlyIncome {
+  id              Int           @id @default(autoincrement())
+  monthlyRecordId Int
+  monthlyRecord   MonthlyRecord @relation(fields: [monthlyRecordId], references: [id], onDelete: Cascade)
+  incomeTypeId    Int
+  incomeType      IncomeType    @relation(fields: [incomeTypeId], references: [id], onDelete: Cascade)
+  amount          Float         @default(0)
+
+  @@unique([monthlyRecordId, incomeTypeId])
+}
+
+model DeductionType {
+  id                Int                @id @default(autoincrement())
+  name              String
+  code              String             @unique
+  sortOrder         Int                @default(0)
+  rules             DeductionRule[]
+  monthlyDeductions MonthlyDeduction[]
+}
+
+model DeductionRule {
+  id              Int           @id @default(autoincrement())
+  deductionTypeId Int
+  deductionType   DeductionType @relation(fields: [deductionTypeId], references: [id], onDelete: Cascade)
+  valueType       String        @default("amount")
+  value           Float         @default(0)
+  effectiveDate   DateTime
+}
+
+model MonthlyDeduction {
+  id              Int           @id @default(autoincrement())
+  monthlyRecordId Int
+  monthlyRecord   MonthlyRecord @relation(fields: [monthlyRecordId], references: [id], onDelete: Cascade)
+  deductionTypeId Int
+  deductionType   DeductionType @relation(fields: [deductionTypeId], references: [id], onDelete: Cascade)
+  amount          Float         @default(0)
+
+  @@unique([monthlyRecordId, deductionTypeId])
+}
+
+model JarAllocation {
+  id              Int           @id @default(autoincrement())
+  monthlyRecordId Int
+  monthlyRecord   MonthlyRecord @relation(fields: [monthlyRecordId], references: [id], onDelete: Cascade)
+  jarId           Int
+  jar             Jar           @relation(fields: [jarId], references: [id])
+  amount          Float         @default(0)
+  percentage      Float? // per-month override; null = use jar default
+  bankAccountId   Int? // per-month override; null = use jar.bankAccountId
+  bankAccount     BankAccount?  @relation(fields: [bankAccountId], references: [id], onDelete: SetNull)
+
+  @@unique([monthlyRecordId, jarId])
+}
+
+model Expense {
+  id                 Int               @id @default(autoincrement())
+  monthlyRecordId    Int
+  monthlyRecord      MonthlyRecord     @relation(fields: [monthlyRecordId], references: [id], onDelete: Cascade)
+  name               String
+  jarCode            String
+  amount             Float
+  isLocked           Boolean           @default(false)
+  bankAccountId      Int?
+  bankAccount        BankAccount?      @relation(fields: [bankAccountId], references: [id])
+  note               String?
+  expenseDate        DateTime?
+  paymentMethodId    Int?
+  paymentMethod      PaymentMethod?    @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
+  createdAt          DateTime          @default(now())
+  recurringExpenseId Int?
+  recurringExpense   RecurringExpense? @relation(fields: [recurringExpenseId], references: [id], onDelete: SetNull)
+}
+
+model SalaryHistory {
+  id            Int      @id @default(autoincrement())
+  effectiveDate DateTime
+  amount        Float
+}
