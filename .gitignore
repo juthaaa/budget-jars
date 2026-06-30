@@ -38,6 +38,9 @@ yarn-error.log*
 next-env.d.ts
 
 /prisma/dev.db
+/prisma/dev.db-journal
+/prisma/dev.db-wal
+/prisma/dev.db-shm
 
 # migration / seed / debug scripts (local only — others restore via dev.db copy)
 /scripts/
