@@ -156,6 +156,9 @@ export default function RecurringExpensesManagePage() {
   const [editingPlanId, setEditingPlanId] = useState<number | null>(null);
   const [editingMaxSeeded, setEditingMaxSeeded] = useState(0);
   const [iPMasterId, setIPMasterId] = useState("");
+  const [iPMasterName, setIPMasterName] = useState("");
+  const [iPMasterOpen, setIPMasterOpen] = useState(false);
+  const [iPMasterCreateNew, setIPMasterCreateNew] = useState(false);
   const [iPNote, setIPNote] = useState("");
   const [iPPrincipal, setIPPrincipal] = useState("");
   const [iPInstallments, setIPInstallments] = useState("");
@@ -277,6 +280,8 @@ export default function RecurringExpensesManagePage() {
     setEditingPlanId(null);
     setEditingMaxSeeded(0);
     setIPMasterId(masters[0]?.id ? String(masters[0].id) : "");
+    setIPMasterName(masters[0]?.name ?? "");
+    setIPMasterCreateNew(false);
     setIPPrincipal(""); setIPInstallments(""); setIPRate("0");
     setIPRateUnit("month"); setIPMethodId(""); setIPStartDate(""); setIPNote("");
     setShowPlanModal(true);
@@ -289,6 +294,7 @@ export default function RecurringExpensesManagePage() {
     setEditingPlanId(plan.id);
     setEditingMaxSeeded(maxSeeded);
     setIPMasterId(String(plan.expenseMasterId));
+    setIPMasterName(plan.expenseMaster.name);
     setIPPrincipal(String(plan.principalAmount));
     setIPInstallments(String(plan.totalInstallments));
     setIPRate(String(plan.interestRate));
@@ -303,14 +309,32 @@ export default function RecurringExpensesManagePage() {
     setShowPlanModal(false);
     setEditingPlanId(null);
     setEditingMaxSeeded(0);
+    setIPMasterId("");
+    setIPMasterName("");
+    setIPMasterCreateNew(false);
     setIPNote("");
   }
 
   async function savePlan() {
-    if (!iPMasterId || !iPPrincipal || !iPInstallments || !iPStartDate) return;
+    const trimmedName = iPMasterName.trim();
+    if ((!iPMasterId && !trimmedName) || !iPPrincipal || !iPInstallments || !iPStartDate) return;
     setSavingPlan(true);
+    let resolvedMasterId = iPMasterId ? parseInt(iPMasterId) : 0;
+    if (!resolvedMasterId && trimmedName) {
+      const existing = masters.find((m) => m.name.toLowerCase() === trimmedName.toLowerCase());
+      if (existing) {
+        resolvedMasterId = existing.id;
+      } else if (iPMasterCreateNew) {
+        const res = await fetch("/api/expense-master", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: trimmedName }),
+        });
+        const newMaster = await res.json();
+        resolvedMasterId = newMaster.id;
+      }
+    }
     const payload = {
-      expenseMasterId: parseInt(iPMasterId),
+      expenseMasterId: resolvedMasterId,
       principalAmount: parseFloat(iPPrincipal),
       totalInstallments: parseInt(iPInstallments),
       interestRate: parseFloat(iPRate) || 0,
@@ -633,12 +657,40 @@ export default function RecurringExpensesManagePage() {
               <div className="grid grid-cols-2 gap-4">
                 <label className="block col-span-2">
                   <span className="text-xs text-gray-500">Expense Type *</span>
-                  <select value={iPMasterId} onChange={(e) => setIPMasterId(e.target.value)}
-                    className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400">
-                    {masters.map((m) => (
-                      <option key={m.id} value={m.id}>{m.name}{m.defaultJarCode ? ` [${m.defaultJarCode}]` : ""}</option>
-                    ))}
-                  </select>
+                  <div className="relative mt-1">
+                    <input
+                      type="text"
+                      value={iPMasterName}
+                      onChange={(e) => { setIPMasterName(e.target.value); setIPMasterId(""); setIPMasterCreateNew(false); setIPMasterOpen(true); }}
+                      onFocus={() => setIPMasterOpen(true)}
+                      onBlur={() => setTimeout(() => setIPMasterOpen(false), 150)}
+                      placeholder="พิมพ์หรือเลือกประเภทค่าใช้จ่าย"
+                      className="block w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                    />
+                    {iPMasterOpen && (
+                      <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                        {masters
+                          .filter((m) => !iPMasterName || m.name.toLowerCase().includes(iPMasterName.toLowerCase()))
+                          .map((m) => (
+                            <button key={m.id} type="button"
+                              onMouseDown={() => { setIPMasterId(String(m.id)); setIPMasterName(m.name); setIPMasterOpen(false); }}
+                              className="w-full text-left px-3 py-2 text-sm hover:bg-emerald-50 text-gray-700">
+                              {m.name}{m.defaultJarCode ? ` [${m.defaultJarCode}]` : ""}
+                            </button>
+                          ))}
+                      </div>
+                    )}
+                    {iPMasterName.trim() && !masters.find((m) => m.name.toLowerCase() === iPMasterName.trim().toLowerCase()) && (
+                      <label className="flex items-center gap-2 mt-2 cursor-pointer select-none">
+                        <input type="checkbox" checked={iPMasterCreateNew}
+                          onChange={(e) => setIPMasterCreateNew(e.target.checked)}
+                          className="rounded border-gray-300 text-emerald-600 focus:ring-emerald-400" />
+                        <span className="text-sm text-gray-600">
+                          สร้าง Expense Type ใหม่: <span className="font-medium text-gray-800">&ldquo;{iPMasterName.trim()}&rdquo;</span>
+                        </span>
+                      </label>
+                    )}
+                  </div>
                 </label>
                 <label className="block">
                   <span className="text-xs text-gray-500">เงินต้น (บาท) *</span>
@@ -731,7 +783,11 @@ export default function RecurringExpensesManagePage() {
             <div className="px-5 py-4 border-t border-gray-100 flex gap-2 justify-end">
               <button onClick={closePlanModal} className="text-sm text-gray-500 px-4 py-2 rounded-lg hover:bg-gray-100">ยกเลิก</button>
               <button onClick={savePlan}
-                disabled={savingPlan || !iPMasterId || !iPPrincipal || !iPInstallments || !iPStartDate}
+                disabled={
+                  savingPlan || !iPPrincipal || !iPInstallments || !iPStartDate ||
+                  (!iPMasterId && !iPMasterName.trim()) ||
+                  (!iPMasterId && !!iPMasterName.trim() && !masters.find((m) => m.name.toLowerCase() === iPMasterName.trim().toLowerCase()) && !iPMasterCreateNew)
+                }
                 className="text-sm bg-emerald-600 text-white px-4 py-2 rounded-lg hover:bg-emerald-700 disabled:opacity-50">
                 {savingPlan ? "กำลังบันทึก..." : editingPlanId ? "บันทึกการแก้ไข" : "สร้างรายการผ่อน"}
               </button>

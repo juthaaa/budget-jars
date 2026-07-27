@@ -68,6 +68,18 @@ function coerceCell(key: ColKey, raw: string, jars: Jar[], paymentMethods: Payme
   return v;
 }
 
+interface SeedCandidate {
+  id: number;
+  name: string;
+  jarCode: string;
+  amount: number;
+  paymentMethodId: number | null;
+  paymentMethodName: string | null;
+  note: string | null;
+  installmentNumber: number | null;
+  totalInstallments: number | null;
+}
+
 interface DeductionItem {
   deductionTypeId: number;
   code: string;
@@ -156,6 +168,13 @@ export default function MonthDetailPage() {
   const [expandedMasters, setExpandedMasters] = useState<Set<string>>(new Set());
   const [filterPmIds, setFilterPmIds] = useState<Set<number>>(new Set());
   const [showPmFilter, setShowPmFilter] = useState(false);
+
+  // Manual seed of recurring items into this month
+  const [showSeedModal, setShowSeedModal] = useState(false);
+  const [seedCandidates, setSeedCandidates] = useState<SeedCandidate[]>([]);
+  const [seedSelected, setSeedSelected] = useState<Set<number>>(new Set());
+  const [seedLoading, setSeedLoading] = useState(false);
+  const [seedSaving, setSeedSaving] = useState(false);
 
   function toggleJar(key: string) {
     setExpandedJars(prev => {
@@ -689,6 +708,59 @@ export default function MonthDetailPage() {
     setSavingExp(false);
   }
 
+  async function openSeedModal() {
+    setShowSeedModal(true);
+    setSeedLoading(true);
+    try {
+      const res = await fetch(`/api/months/${yearMonth}/seed-recurring`);
+      const data: SeedCandidate[] = await res.json();
+      const list = Array.isArray(data) ? data : [];
+      setSeedCandidates(list);
+      setSeedSelected(new Set(list.map((c) => c.id)));
+    } catch {
+      setSeedCandidates([]);
+      setSeedSelected(new Set());
+    }
+    setSeedLoading(false);
+  }
+
+  function toggleSeed(id: number) {
+    setSeedSelected((prev) => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  function toggleSeedAll() {
+    setSeedSelected((prev) =>
+      prev.size === seedCandidates.length ? new Set() : new Set(seedCandidates.map((c) => c.id)),
+    );
+  }
+
+  async function saveSeed() {
+    if (seedSelected.size === 0) return;
+    setSeedSaving(true);
+    const res = await fetch(`/api/months/${yearMonth}/seed-recurring`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ ids: [...seedSelected] }),
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: "Seed failed" }));
+      alert(err.error || "เพิ่มไม่สำเร็จ");
+      setSeedSaving(false);
+      return;
+    }
+    const result = await res.json().catch(() => ({ skippedLocked: 0 }));
+    if (result.skippedLocked > 0) {
+      alert(`ข้าม ${result.skippedLocked} รายการที่อยู่ใน payment method ที่ตรวจสอบแล้ว (ล็อก)`);
+    }
+    setShowSeedModal(false);
+    await fetchData();
+    setSeedSaving(false);
+  }
+
   async function deleteExpense(id: number) {
     const exp = record?.expenses.find(e => e.id === id);
     if (exp?.paymentMethod && lockedPaymentMethodIds.has(exp.paymentMethod.id)) {
@@ -1197,6 +1269,10 @@ export default function MonthDetailPage() {
                 className={`px-2.5 py-1.5 border-l border-gray-200 ${expenseView === "flat" ? "bg-indigo-600 text-white" : "bg-white text-gray-500 hover:bg-gray-50"}`}
               >รายการ</button>
             </div>
+            <button onClick={openSeedModal}
+              className="text-xs bg-white text-indigo-600 border border-indigo-300 px-3 py-1.5 rounded-md hover:bg-indigo-50">
+              ⟳ Seed รายการประจำ
+            </button>
             <button onClick={openAddExpense}
               className="text-xs bg-green-600 text-white px-3 py-1.5 rounded-md hover:bg-green-700">
               + เพิ่มรายจ่าย
@@ -1406,6 +1482,79 @@ export default function MonthDetailPage() {
           )}
         </div>
       </div>
+
+      {/* Manual Seed Modal */}
+      {showSeedModal && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl w-full max-w-lg shadow-2xl flex flex-col max-h-[90vh]">
+            <div className="px-5 py-4 border-b border-gray-100">
+              <h3 className="font-semibold text-gray-800">Seed รายการประจำเข้าเดือนนี้</h3>
+              <p className="text-xs text-gray-400 mt-0.5">รายการประจำที่ยังไม่ถูกเพิ่มในเดือนนี้</p>
+            </div>
+
+            <div className="flex-1 overflow-y-auto">
+              {seedLoading ? (
+                <div className="py-10 text-center text-gray-400 text-sm">กำลังโหลด...</div>
+              ) : seedCandidates.length === 0 ? (
+                <div className="py-10 text-center text-gray-400 text-sm">
+                  ไม่มีรายการประจำใหม่ที่ยังไม่ถูกเพิ่ม
+                </div>
+              ) : (
+                <>
+                  <label className="flex items-center gap-2 px-5 py-2.5 border-b border-gray-100 bg-gray-50 cursor-pointer sticky top-0">
+                    <input
+                      type="checkbox"
+                      checked={seedSelected.size === seedCandidates.length}
+                      onChange={toggleSeedAll}
+                      className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-400"
+                    />
+                    <span className="text-xs font-medium text-gray-600">
+                      เลือกทั้งหมด ({seedSelected.size}/{seedCandidates.length})
+                    </span>
+                  </label>
+                  {seedCandidates.map((c) => (
+                    <label
+                      key={c.id}
+                      className="flex items-center gap-3 px-5 py-2.5 border-b border-gray-50 hover:bg-gray-50 cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={seedSelected.has(c.id)}
+                        onChange={() => toggleSeed(c.id)}
+                        className="w-4 h-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-400"
+                      />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium text-gray-800 truncate">{c.name}</span>
+                          {c.installmentNumber != null && (
+                            <span className="text-xs bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded font-medium">
+                              งวด {c.installmentNumber}/{c.totalInstallments}
+                            </span>
+                          )}
+                        </div>
+                        <div className="flex items-center gap-2 text-xs text-gray-400 mt-0.5">
+                          <span className="bg-indigo-100 text-indigo-700 px-1.5 py-0.5 rounded font-medium">{c.jarCode}</span>
+                          {c.paymentMethodName && <span>{c.paymentMethodName}</span>}
+                        </div>
+                      </div>
+                      <span className="text-sm font-medium text-gray-800 tabular-nums">{formatNum(c.amount)}</span>
+                    </label>
+                  ))}
+                </>
+              )}
+            </div>
+
+            <div className="px-5 py-4 border-t border-gray-100 flex gap-2 justify-end">
+              <button onClick={() => setShowSeedModal(false)}
+                className="text-sm text-gray-500 px-4 py-2 rounded-lg hover:bg-gray-100">ยกเลิก</button>
+              <button onClick={saveSeed} disabled={seedSaving || seedSelected.size === 0}
+                className="text-sm bg-indigo-600 text-white px-4 py-2 rounded-lg hover:bg-indigo-700 disabled:opacity-50">
+                {seedSaving ? "กำลังเพิ่ม..." : `เพิ่ม ${seedSelected.size} รายการ`}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Expense Modal */}
       {showExpenseModal && editingExpense && (
