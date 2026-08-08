@@ -7,6 +7,7 @@ import UserMenu from "./UserMenu";
 const LINKS = [
   { href: "/", label: "หน้าหลัก" },
   { href: "/history", label: "ประวัติ" },
+  { href: "/transactions", label: "ธุรกรรม" },
   { href: "/salary", label: "เงินเดือน" },
   { href: "/jars/manage", label: "จัดการ Jar" },
   { href: "/accounts/manage", label: "ธนาคาร" },
