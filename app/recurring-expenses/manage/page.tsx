@@ -375,6 +375,8 @@ export default function RecurringExpensesManagePage() {
 
   const totalPreview = previewRows.reduce((s, r) => s + r.amount, 0);
   const totalInterest = previewRows.reduce((s, r) => s + r.interest, 0);
+  // Expense Type is locked once any installment of the edited plan has been seeded.
+  const masterLocked = editingPlanId !== null && editingMaxSeeded > 0;
 
   return (
     <div className="space-y-8">
@@ -662,12 +664,18 @@ export default function RecurringExpensesManagePage() {
                       type="text"
                       value={iPMasterName}
                       onChange={(e) => { setIPMasterName(e.target.value); setIPMasterId(""); setIPMasterCreateNew(false); setIPMasterOpen(true); }}
-                      onFocus={() => setIPMasterOpen(true)}
+                      onFocus={() => { if (!masterLocked) setIPMasterOpen(true); }}
                       onBlur={() => setTimeout(() => setIPMasterOpen(false), 150)}
+                      readOnly={masterLocked}
                       placeholder="พิมพ์หรือเลือกประเภทค่าใช้จ่าย"
-                      className="block w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+                      className={`block w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 ${masterLocked ? "bg-gray-100 text-gray-500 cursor-not-allowed" : ""}`}
                     />
-                    {iPMasterOpen && (
+                    {masterLocked && (
+                      <p className="text-[10px] text-gray-400 mt-1">
+                        เปลี่ยน Expense Type ไม่ได้ เพราะมีงวดที่ถูกดึงไปแล้ว
+                      </p>
+                    )}
+                    {!masterLocked && iPMasterOpen && (
                       <div className="absolute z-10 w-full mt-1 bg-white border border-gray-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
                         {masters
                           .filter((m) => !iPMasterName || m.name.toLowerCase().includes(iPMasterName.toLowerCase()))
@@ -680,7 +688,7 @@ export default function RecurringExpensesManagePage() {
                           ))}
                       </div>
                     )}
-                    {iPMasterName.trim() && !masters.find((m) => m.name.toLowerCase() === iPMasterName.trim().toLowerCase()) && (
+                    {!masterLocked && iPMasterName.trim() && !masters.find((m) => m.name.toLowerCase() === iPMasterName.trim().toLowerCase()) && (
                       <label className="flex items-center gap-2 mt-2 cursor-pointer select-none">
                         <input type="checkbox" checked={iPMasterCreateNew}
                           onChange={(e) => setIPMasterCreateNew(e.target.checked)}

@@ -237,3 +237,38 @@ model SalaryHistory {
   effectiveDate DateTime
   amount        Float
 }
+
+// Transactions captured from outside the web app (LINE bot for now, email later).
+// Deliberately standalone — no relations to the models above — so the bot can record
+// a message even when its MonthlyRecord does not exist yet. Phase 2 seeds these into
+// Expense once the month is created.
+model Transaction {
+  id         Int     @id @default(autoincrement())
+  source     String  @default("line") // line | email | manual
+  externalId String? @unique // LINE webhookEventId — dedupe on retry
+  rawText    String // original user message
+  parsed     String? // raw JSON from the classifier, for replay after prompt changes
+  confidence Float?
+  status     String  @default("pending") // pending | failed | ignored ("applied" in phase 2)
+
+  direction String // "in" (income) | "out" (expense)
+  name      String
+  amount    Float // always positive — direction carries the sign
+  jarCode   String? // suggested by AI, validated against Jar.code
+  note      String?
+  paymentMethodCode String? // suggested by AI, validated against PaymentMethod.code
+
+  // Kept for phase 2. Plain Ints, not FKs, to avoid coupling with the existing models.
+  paymentMethodId Int?
+  bankAccountId   Int?
+
+  occurredAt DateTime // UTC
+  year       Int // derived from occurredAt — used to match a MonthlyRecord later
+  month      Int
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([year, month, status])
+  @@index([direction, occurredAt])
+}

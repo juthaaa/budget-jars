@@ -91,6 +91,18 @@ export async function PATCH(
     );
   }
 
+  const newMasterId = parseInt(expenseMasterId);
+  const masterChanged = newMasterId !== existing.expenseMasterId;
+
+  // Expense Type is locked once any installment has been seeded — plan and its
+  // items must always share the same expenseMasterId.
+  if (masterChanged && maxSeeded > 0) {
+    return NextResponse.json(
+      { error: "ไม่สามารถเปลี่ยน Expense Type ได้ เพราะมีงวดที่ถูกดึงไปแล้ว" },
+      { status: 400 }
+    );
+  }
+
   await db.installmentPlan.update({
     where: { id },
     data: {
@@ -104,6 +116,15 @@ export async function PATCH(
       note: note ?? null,
     },
   });
+
+  // Keep all existing items on the same Expense Type as the plan. Safe here
+  // because a master change with any seeded item was rejected above.
+  if (masterChanged) {
+    await db.recurringExpense.updateMany({
+      where: { installmentPlanId: id },
+      data: { expenseMasterId: newMasterId },
+    });
+  }
 
   const amounts = calcInstallmentAmounts(principal, n, rate, unit);
   const childMap = new Map<number, ChildRow>(

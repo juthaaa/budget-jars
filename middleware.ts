@@ -11,6 +11,9 @@ const PUBLIC_PATHS = new Set<string>([
   "/login",
   "/api/auth/login",
   "/api/auth/logout",
+  // LINE has no session cookie — authenticity comes from x-line-signature
+  // verification inside the route itself, not from this middleware.
+  "/api/line/webhook",
 ]);
 
 export async function middleware(req: NextRequest) {
