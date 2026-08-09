@@ -9,12 +9,20 @@ export async function GET(request: Request) {
   const direction = searchParams.get("direction");
   const year = searchParams.get("year");
   const month = searchParams.get("month");
+  const date = searchParams.get("date"); // YYYY-MM-DD, exact day (face-value, see transaction-time.ts)
 
   const where: Prisma.TransactionWhereInput = {};
   if (status) where.status = status;
   if (direction) where.direction = direction;
   if (year) where.year = parseInt(year);
   if (month) where.month = parseInt(month);
+  if (date) {
+    const [y, m, d] = date.split("-").map(Number);
+    where.occurredAt = {
+      gte: new Date(Date.UTC(y, m - 1, d, 0, 0, 0)),
+      lte: new Date(Date.UTC(y, m - 1, d, 23, 59, 59, 999)),
+    };
+  }
 
   const transactions = await prisma.transaction.findMany({
     where,

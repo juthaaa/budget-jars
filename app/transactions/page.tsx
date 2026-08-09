@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { formatTHB } from "@/lib/utils";
-import { bangkokNowISODateTime } from "@/lib/transaction-time";
+import { bangkokNowISODateTime, bangkokTodayISODate } from "@/lib/transaction-time";
 
 interface Transaction {
   id: number;
@@ -47,7 +47,7 @@ export default function TransactionsPage() {
 
   const [fStatus, setFStatus] = useState("");
   const [fDirection, setFDirection] = useState("");
-  const [fYearMonth, setFYearMonth] = useState("");
+  const [fDate, setFDate] = useState(bangkokTodayISODate());
 
   const [showForm, setShowForm] = useState(false);
   const [editing, setEditing] = useState<Transaction | null>(null);
@@ -65,11 +65,7 @@ export default function TransactionsPage() {
     const params = new URLSearchParams();
     if (fStatus) params.set("status", fStatus);
     if (fDirection) params.set("direction", fDirection);
-    if (fYearMonth) {
-      const [y, m] = fYearMonth.split("-");
-      params.set("year", y);
-      params.set("month", String(parseInt(m)));
-    }
+    if (fDate) params.set("date", fDate);
     const qs = params.toString();
     const data = await fetch(`/api/transactions${qs ? `?${qs}` : ""}`).then((r) => r.json());
     setTransactions(data);
@@ -79,7 +75,10 @@ export default function TransactionsPage() {
   useEffect(() => {
     fetchTransactions();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fStatus, fDirection, fYearMonth]);
+  }, [fStatus, fDirection, fDate]);
+
+  const totalIn = transactions.reduce((s, t) => s + (t.direction === "in" ? t.amount : 0), 0);
+  const totalOut = transactions.reduce((s, t) => s + (t.direction === "out" ? t.amount : 0), 0);
 
   function openAdd() {
     setEditing(null);
@@ -183,19 +182,37 @@ export default function TransactionsPage() {
           <option value="in">รายรับ</option>
         </select>
         <input
-          type="month"
-          value={fYearMonth}
-          onChange={(e) => setFYearMonth(e.target.value)}
+          type="date"
+          value={fDate}
+          onChange={(e) => setFDate(e.target.value)}
           className="border border-gray-300 rounded-lg px-3 py-2 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-indigo-400"
         />
-        {(fStatus || fDirection || fYearMonth) && (
+        {(fStatus || fDirection || fDate) && (
           <button
-            onClick={() => { setFStatus(""); setFDirection(""); setFYearMonth(""); }}
+            onClick={() => { setFStatus(""); setFDirection(""); setFDate(""); }}
             className="text-sm text-gray-400 hover:text-gray-600 px-2"
           >
             ล้างตัวกรอง
           </button>
         )}
+      </div>
+
+      {/* Summary cards */}
+      <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
+          <div className="text-xs text-gray-500">รายรับรวม</div>
+          <div className="text-lg font-bold text-green-600 mt-0.5">{formatTHB(totalIn)}</div>
+        </div>
+        <div className="bg-white rounded-xl border border-gray-200 p-4">
+          <div className="text-xs text-gray-500">รายจ่ายรวม</div>
+          <div className="text-lg font-bold text-red-600 mt-0.5">{formatTHB(totalOut)}</div>
+        </div>
+        <div className="bg-white rounded-xl border border-gray-200 p-4 col-span-2 sm:col-span-1">
+          <div className="text-xs text-gray-500">สุทธิ</div>
+          <div className={`text-lg font-bold mt-0.5 ${totalIn - totalOut >= 0 ? "text-gray-900" : "text-red-600"}`}>
+            {formatTHB(totalIn - totalOut)}
+          </div>
+        </div>
       </div>
 
       {loading ? (
