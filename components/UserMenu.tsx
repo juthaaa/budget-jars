@@ -23,11 +23,11 @@ export default function UserMenu() {
   if (!username) return null;
 
   return (
-    <div className="flex items-center gap-3 text-sm">
-      <span className="text-gray-500">👤 {username}</span>
+    <div className="flex items-center justify-between gap-2 text-sm">
+      <span className="text-gray-500 truncate">👤 {username}</span>
       <button
         onClick={logout}
-        className="text-gray-600 hover:text-red-600 transition-colors"
+        className="text-gray-600 hover:text-red-600 transition-colors shrink-0"
       >
         ออกจากระบบ
       </button>
