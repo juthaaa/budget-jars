@@ -44,7 +44,6 @@ function calcInstallmentAmounts(
 export async function GET() {
   const plans = await db.installmentPlan.findMany({
     include: {
-      expenseMaster: true,
       paymentMethod: { select: { id: true, name: true } },
       items: {
         include: { _count: { select: { expenses: true } } },
@@ -59,12 +58,12 @@ export async function GET() {
 export async function POST(request: Request) {
   const body = await request.json();
   const {
-    expenseMasterId, principalAmount, totalInstallments,
+    name, jarCode, principalAmount, totalInstallments,
     interestRate, interestUnit, paymentMethodId, startDate, note,
   } = body;
 
-  if (!expenseMasterId)
-    return NextResponse.json({ error: "expenseMasterId required" }, { status: 400 });
+  if (!name || !String(name).trim())
+    return NextResponse.json({ error: "name required" }, { status: 400 });
   if (!principalAmount || parseFloat(principalAmount) <= 0)
     return NextResponse.json({ error: "principalAmount must be > 0" }, { status: 400 });
   if (!totalInstallments || parseInt(totalInstallments) < 1)
@@ -79,10 +78,6 @@ export async function POST(request: Request) {
   const n = parseInt(totalInstallments);
   const principal = parseFloat(principalAmount);
 
-  const master = await db.expenseMaster.findUnique({ where: { id: parseInt(expenseMasterId) } });
-  if (!master)
-    return NextResponse.json({ error: "ExpenseMaster not found" }, { status: 404 });
-
   const amounts = calcInstallmentAmounts(principal, n, rate, unit);
 
   const startDateParsed = new Date(startDate);
@@ -92,7 +87,8 @@ export async function POST(request: Request) {
   const plan = await db.$transaction(async (tx: typeof db) => {
     const created = await tx.installmentPlan.create({
       data: {
-        expenseMasterId: parseInt(expenseMasterId),
+        name: String(name).trim(),
+        jarCode: jarCode || "NEC",
         principalAmount: principal,
         totalInstallments: n,
         interestRate: rate,
@@ -108,7 +104,8 @@ export async function POST(request: Request) {
       const monthDate = new Date(Date.UTC(startYear, startMonth + i, 1));
       await tx.recurringExpense.create({
         data: {
-          expenseMasterId: parseInt(expenseMasterId),
+          name: created.name,
+          jarCode: created.jarCode,
           amount: amounts[i],
           startDate: monthDate,
           endDate: monthDate,
@@ -125,7 +122,6 @@ export async function POST(request: Request) {
     return tx.installmentPlan.findUnique({
       where: { id: created.id },
       include: {
-        expenseMaster: true,
         paymentMethod: { select: { id: true, name: true } },
         items: { orderBy: { installmentNumber: "asc" } },
       },

@@ -18,14 +18,15 @@ export async function PATCH(
 ) {
   const id = parseInt(params.id);
   const body = await request.json();
-  const { expenseMasterId, amount, startDate, endDate, paymentMethodId, sortOrder, intervalValue, intervalUnit, note } = body;
+  const { name, jarCode, amount, startDate, endDate, paymentMethodId, sortOrder, intervalValue, intervalUnit, note } = body;
 
   if (intervalUnit !== undefined && !ALLOWED_UNITS.has(intervalUnit)) {
     return NextResponse.json({ error: "intervalUnit must be 'month' or 'year'" }, { status: 400 });
   }
 
   const data: Record<string, unknown> = {};
-  if (expenseMasterId !== undefined) data.expenseMasterId = parseInt(expenseMasterId);
+  if (name !== undefined) data.name = String(name).trim();
+  if (jarCode !== undefined) data.jarCode = jarCode || "NEC";
   if (amount !== undefined) data.amount = parseFloat(amount) || 0;
   if (startDate !== undefined) data.startDate = parseDate(startDate);
   if (endDate !== undefined) data.endDate = parseDate(endDate);
@@ -38,7 +39,7 @@ export async function PATCH(
   const item = await db.recurringExpense.update({
     where: { id },
     data,
-    include: { expenseMaster: true, paymentMethod: { select: { id: true, name: true } } },
+    include: { paymentMethod: { select: { id: true, name: true } } },
   });
   return NextResponse.json(item);
 }

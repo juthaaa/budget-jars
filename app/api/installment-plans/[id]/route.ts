@@ -46,7 +46,8 @@ export async function PATCH(
   const id = parseInt(params.id);
   const body = await request.json();
   const {
-    expenseMasterId,
+    name,
+    jarCode,
     principalAmount,
     totalInstallments,
     interestRate,
@@ -91,11 +92,12 @@ export async function PATCH(
     );
   }
 
-  const newMasterId = parseInt(expenseMasterId);
-  const masterChanged = newMasterId !== existing.expenseMasterId;
+  const newName = String(name ?? existing.name).trim();
+  const newJarCode = jarCode || existing.jarCode;
+  const masterChanged = newName !== existing.name || newJarCode !== existing.jarCode;
 
   // Expense Type is locked once any installment has been seeded — plan and its
-  // items must always share the same expenseMasterId.
+  // items must always share the same name/jarCode.
   if (masterChanged && maxSeeded > 0) {
     return NextResponse.json(
       { error: "ไม่สามารถเปลี่ยน Expense Type ได้ เพราะมีงวดที่ถูกดึงไปแล้ว" },
@@ -106,7 +108,8 @@ export async function PATCH(
   await db.installmentPlan.update({
     where: { id },
     data: {
-      expenseMasterId: parseInt(expenseMasterId),
+      name: newName,
+      jarCode: newJarCode,
       principalAmount: principal,
       totalInstallments: n,
       interestRate: rate,
@@ -122,7 +125,7 @@ export async function PATCH(
   if (masterChanged) {
     await db.recurringExpense.updateMany({
       where: { installmentPlanId: id },
-      data: { expenseMasterId: newMasterId },
+      data: { name: newName, jarCode: newJarCode },
     });
   }
 
@@ -145,7 +148,8 @@ export async function PATCH(
     } else {
       await db.recurringExpense.create({
         data: {
-          expenseMasterId: parseInt(expenseMasterId),
+          name: newName,
+          jarCode: newJarCode,
           amount: amounts[i],
           startDate: installDate,
           endDate: installDate,

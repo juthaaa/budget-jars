@@ -12,11 +12,12 @@ function parseYearMonth(ym: string) {
 
 type RecurringRow = {
   id: number;
+  name: string;
+  jarCode: string;
   amount: number;
   paymentMethodId: number | null;
   installmentNumber: number | null;
   note: string | null;
-  expenseMaster: { name: string; defaultJarCode: string | null };
   paymentMethod: { id: number; name: string } | null;
   installmentPlan: { note: string | null; totalInstallments: number } | null;
 };
@@ -32,7 +33,6 @@ async function findCandidates(recordId: number, monthStart: Date): Promise<Recur
       ],
     },
     include: {
-      expenseMaster: { select: { name: true, defaultJarCode: true } },
       paymentMethod: { select: { id: true, name: true } },
       installmentPlan: { select: { note: true, totalInstallments: true } },
     },
@@ -67,8 +67,8 @@ export async function GET(
   return NextResponse.json(
     candidates.map((r) => ({
       id: r.id,
-      name: r.expenseMaster.name,
-      jarCode: r.expenseMaster.defaultJarCode ?? "NEC",
+      name: r.name,
+      jarCode: r.jarCode,
       amount: r.amount,
       paymentMethodId: r.paymentMethod?.id ?? null,
       paymentMethodName: r.paymentMethod?.name ?? null,
@@ -127,8 +127,8 @@ export async function POST(
     await db.expense.createMany({
       data: seedable.map((r) => ({
         monthlyRecordId: record.id,
-        name: r.expenseMaster.name,
-        jarCode: r.expenseMaster.defaultJarCode ?? "NEC",
+        name: r.name,
+        jarCode: r.jarCode,
         amount: r.amount,
         paymentMethodId: r.paymentMethodId,
         bankAccountId: null,

@@ -83,7 +83,6 @@ export async function POST(request: Request) {
       ],
     },
     include: {
-      expenseMaster: true,
       installmentPlan: { select: { note: true } },
     },
     orderBy: [{ sortOrder: "asc" }, { id: "asc" }],
@@ -91,6 +90,8 @@ export async function POST(request: Request) {
 
   type RecurringRow = {
     id: number;
+    name: string;
+    jarCode: string;
     amount: number;
     paymentMethodId: number | null;
     startDate: Date | null;
@@ -98,7 +99,6 @@ export async function POST(request: Request) {
     intervalValue: number;
     intervalUnit: string;
     note: string | null;
-    expenseMaster: { name: string; defaultJarCode: string | null };
     installmentPlan: { note: string | null } | null;
   };
 
@@ -121,8 +121,8 @@ export async function POST(request: Request) {
     await db.expense.createMany({
       data: filtered.map((r: RecurringRow) => ({
         monthlyRecordId: record.id,
-        name: r.expenseMaster.name,
-        jarCode: r.expenseMaster.defaultJarCode ?? "NEC",
+        name: r.name,
+        jarCode: r.jarCode,
         amount: r.amount,
         paymentMethodId: r.paymentMethodId,
         bankAccountId: null,

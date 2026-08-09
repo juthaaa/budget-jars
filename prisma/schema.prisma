@@ -31,20 +31,18 @@ model BankAccount {
 }
 
 model ExpenseMaster {
-  id               Int                @id @default(autoincrement())
-  name             String
-  defaultJarCode   String?
-  bankAccountId    Int?
-  bankAccount      BankAccount?       @relation(fields: [bankAccountId], references: [id], onDelete: SetNull)
-  sortOrder        Int                @default(0)
-  recurring        RecurringExpense[]
-  installmentPlans InstallmentPlan[]
+  id             Int          @id @default(autoincrement())
+  name           String
+  defaultJarCode String?
+  bankAccountId  Int?
+  bankAccount    BankAccount? @relation(fields: [bankAccountId], references: [id], onDelete: SetNull)
+  sortOrder      Int          @default(0)
 }
 
 model InstallmentPlan {
   id                Int                @id @default(autoincrement())
-  expenseMasterId   Int
-  expenseMaster     ExpenseMaster      @relation(fields: [expenseMasterId], references: [id])
+  name              String
+  jarCode           String
   principalAmount   Float
   totalInstallments Int
   interestRate      Float              @default(0)
@@ -59,8 +57,8 @@ model InstallmentPlan {
 
 model RecurringExpense {
   id                Int              @id @default(autoincrement())
-  expenseMasterId   Int
-  expenseMaster     ExpenseMaster    @relation(fields: [expenseMasterId], references: [id], onDelete: Cascade)
+  name              String
+  jarCode           String
   amount            Float
   startDate         DateTime?
   endDate           DateTime?

@@ -1,0 +1,116 @@
+{
+  "recurring": [
+    {
+      "id": 1,
+      "name": "ค่าหอ",
+      "jarCode": "NEC"
+    },
+    {
+      "id": 5,
+      "name": "YouTube Premium",
+      "jarCode": "PLAY"
+    },
+    {
+      "id": 6,
+      "name": "YouTube Premium",
+      "jarCode": "PLAY"
+    },
+    {
+      "id": 7,
+      "name": "cloud",
+      "jarCode": "NEC"
+    },
+    {
+      "id": 8,
+      "name": "Netflix",
+      "jarCode": "PLAY"
+    },
+    {
+      "id": 9,
+      "name": "Google Drive",
+      "jarCode": "NEC"
+    },
+    {
+      "id": 10,
+      "name": "YouTube",
+      "jarCode": "PLAY"
+    },
+    {
+      "id": 11,
+      "name": "โทรศัพท์",
+      "jarCode": "NEC"
+    },
+    {
+      "id": 12,
+      "name": "AIS Fibre",
+      "jarCode": "NEC"
+    },
+    {
+      "id": 13,
+      "name": "ประกันอุบัติเหตุ",
+      "jarCode": "LTSS2"
+    },
+    {
+      "id": 14,
+      "name": "Claude Pro",
+      "jarCode": "EDU"
+    },
+    {
+      "id": 18,
+      "name": "เรียนขับรถ",
+      "jarCode": "EDU"
+    },
+    {
+      "id": 19,
+      "name": "เรียนขับรถ",
+      "jarCode": "EDU"
+    },
+    {
+      "id": 20,
+      "name": "เรียนขับรถ",
+      "jarCode": "EDU"
+    },
+    {
+      "id": 21,
+      "name": "เรียนขับรถ",
+      "jarCode": "EDU"
+    },
+    {
+      "id": 22,
+      "name": "เรียนขับรถ",
+      "jarCode": "EDU"
+    },
+    {
+      "id": 23,
+      "name": "เรียนขับรถ",
+      "jarCode": "EDU"
+    },
+    {
+      "id": 24,
+      "name": "เรียนขับรถ",
+      "jarCode": "EDU"
+    },
+    {
+      "id": 25,
+      "name": "เรียนขับรถ",
+      "jarCode": "EDU"
+    },
+    {
+      "id": 26,
+      "name": "เรียนขับรถ",
+      "jarCode": "EDU"
+    },
+    {
+      "id": 27,
+      "name": "เรียนขับรถ",
+      "jarCode": "EDU"
+    }
+  ],
+  "plans": [
+    {
+      "id": 2,
+      "name": "เรียนขับรถ",
+      "jarCode": "EDU"
+    }
+  ]
+}

@@ -16,8 +16,8 @@ export async function GET() {
   const items = await db.recurringExpense.findMany({
     where: { installmentPlanId: null },
     include: {
-      expenseMaster: true,
       paymentMethod: { select: { id: true, name: true } },
+      _count: { select: { expenses: true } },
     },
     orderBy: [{ sortOrder: "asc" }, { id: "asc" }],
   });
@@ -26,10 +26,10 @@ export async function GET() {
 
 export async function POST(request: Request) {
   const body = await request.json();
-  const { expenseMasterId, amount, startDate, endDate, paymentMethodId, sortOrder, intervalValue, intervalUnit, note } = body;
+  const { name, jarCode, amount, startDate, endDate, paymentMethodId, sortOrder, intervalValue, intervalUnit, note } = body;
 
-  if (!expenseMasterId) {
-    return NextResponse.json({ error: "expenseMasterId is required" }, { status: 400 });
+  if (!name || !String(name).trim()) {
+    return NextResponse.json({ error: "name is required" }, { status: 400 });
   }
   const unit = intervalUnit ?? "month";
   if (!ALLOWED_UNITS.has(unit)) {
@@ -38,7 +38,8 @@ export async function POST(request: Request) {
 
   const item = await db.recurringExpense.create({
     data: {
-      expenseMasterId: parseInt(expenseMasterId),
+      name: String(name).trim(),
+      jarCode: jarCode || "NEC",
       amount: parseFloat(amount) || 0,
       startDate: parseDate(startDate),
       endDate: parseDate(endDate),
@@ -48,7 +49,7 @@ export async function POST(request: Request) {
       intervalUnit: unit,
       note: note ?? null,
     },
-    include: { expenseMaster: true, paymentMethod: { select: { id: true, name: true } } },
+    include: { paymentMethod: { select: { id: true, name: true } } },
   });
   return NextResponse.json(item, { status: 201 });
 }
