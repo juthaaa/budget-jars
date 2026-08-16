@@ -12,9 +12,15 @@ interface Transaction {
   name: string;
   amount: number;
   note: string | null;
+  paymentMethodId: number | null;
   occurredAt: string;
   year: number;
   month: number;
+}
+
+interface PaymentMethod {
+  id: number;
+  name: string;
 }
 
 const STATUS_LABEL: Record<string, string> = {
@@ -43,6 +49,7 @@ function formatDateTime(iso: string): string {
 
 export default function TransactionsPage() {
   const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethod[]>([]);
   const [loading, setLoading] = useState(true);
 
   const [fStatus, setFStatus] = useState("");
@@ -56,6 +63,7 @@ export default function TransactionsPage() {
   const [fAmount, setFAmount] = useState("");
   const [fOccurredAt, setFOccurredAt] = useState("");
   const [fNote, setFNote] = useState("");
+  const [fPaymentMethodId, setFPaymentMethodId] = useState("");
   const [fTxStatus, setFTxStatus] = useState("pending");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -77,6 +85,17 @@ export default function TransactionsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fStatus, fDirection, fDate]);
 
+  useEffect(() => {
+    fetch("/api/payment-methods")
+      .then((r) => r.json())
+      .then(setPaymentMethods);
+  }, []);
+
+  function paymentMethodName(id: number | null): string {
+    if (!id) return "—";
+    return paymentMethods.find((pm) => pm.id === id)?.name ?? "—";
+  }
+
   const totalIn = transactions.reduce((s, t) => s + (t.direction === "in" ? t.amount : 0), 0);
   const totalOut = transactions.reduce((s, t) => s + (t.direction === "out" ? t.amount : 0), 0);
 
@@ -87,6 +106,7 @@ export default function TransactionsPage() {
     setFAmount("");
     setFOccurredAt(bangkokNowISODateTime().slice(0, 16));
     setFNote("");
+    setFPaymentMethodId("");
     setFTxStatus("pending");
     setError("");
     setShowForm(true);
@@ -99,6 +119,7 @@ export default function TransactionsPage() {
     setFAmount(String(tx.amount));
     setFOccurredAt(tx.occurredAt.slice(0, 16));
     setFNote(tx.note || "");
+    setFPaymentMethodId(tx.paymentMethodId ? String(tx.paymentMethodId) : "");
     setFTxStatus(tx.status === "ignored" ? "ignored" : "pending");
     setError("");
     setShowForm(true);
@@ -114,6 +135,7 @@ export default function TransactionsPage() {
       amount: Number(fAmount),
       occurredAt: fOccurredAt,
       note: fNote || null,
+      paymentMethodId: fPaymentMethodId ? Number(fPaymentMethodId) : null,
     };
     if (editing) body.status = fTxStatus;
 
@@ -232,6 +254,7 @@ export default function TransactionsPage() {
                   <th className="text-left px-3 py-3">ประเภท</th>
                   <th className="text-left px-3 py-3">รายการ</th>
                   <th className="text-right px-3 py-3">จำนวนเงิน</th>
+                  <th className="text-left px-3 py-3">วิธีชำระ</th>
                   <th className="text-left px-3 py-3">สถานะ</th>
                   <th className="px-3 py-3"></th>
                 </tr>
@@ -252,6 +275,7 @@ export default function TransactionsPage() {
                     <td className={`px-3 py-3 text-right font-medium ${tx.direction === "in" ? "text-green-600" : "text-red-600"}`}>
                       {tx.direction === "in" ? "+" : "-"}{formatTHB(tx.amount)}
                     </td>
+                    <td className="px-3 py-3 text-gray-500">{paymentMethodName(tx.paymentMethodId)}</td>
                     <td className="px-3 py-3">
                       <span className={`text-xs px-2 py-0.5 rounded ${STATUS_BADGE[tx.status] || "bg-gray-100 text-gray-600"}`}>
                         {STATUS_LABEL[tx.status] || tx.status}
@@ -288,7 +312,7 @@ export default function TransactionsPage() {
                   {tx.direction === "in" ? "+" : "-"}{formatTHB(tx.amount)}
                 </div>
                 <div className="text-xs text-gray-400 mt-1">
-                  {formatDateTime(tx.occurredAt)}
+                  {formatDateTime(tx.occurredAt)} · {paymentMethodName(tx.paymentMethodId)}
                   {tx.note && ` · ${tx.note}`}
                 </div>
                 <div className="flex gap-2 mt-3">
@@ -367,6 +391,19 @@ export default function TransactionsPage() {
                   onChange={(e) => setFNote(e.target.value)}
                   className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
                 />
+              </label>
+              <label className="block">
+                <span className="text-xs text-gray-500">วิธีชำระ</span>
+                <select
+                  value={fPaymentMethodId}
+                  onChange={(e) => setFPaymentMethodId(e.target.value)}
+                  className="mt-1 block w-full border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+                >
+                  <option value="">ไม่ระบุ</option>
+                  {paymentMethods.map((pm) => (
+                    <option key={pm.id} value={pm.id}>{pm.name}</option>
+                  ))}
+                </select>
               </label>
               {editing && (
                 <label className="block">

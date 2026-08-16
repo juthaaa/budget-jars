@@ -60,6 +60,7 @@ export async function POST(request: Request) {
       name: body.name,
       amount,
       note: body.note || null,
+      paymentMethodId: body.paymentMethodId ? Number(body.paymentMethodId) : null,
       occurredAt,
       year,
       month,

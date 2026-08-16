@@ -32,6 +32,9 @@ export async function PATCH(
   if ("note" in body) {
     data.note = body.note || null;
   }
+  if ("paymentMethodId" in body) {
+    data.paymentMethodId = body.paymentMethodId ? Number(body.paymentMethodId) : null;
+  }
   if ("status" in body) {
     if (body.status !== "pending" && body.status !== "ignored") {
       return NextResponse.json({ error: "สถานะไม่ถูกต้อง" }, { status: 400 });
