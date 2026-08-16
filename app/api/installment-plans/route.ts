@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { badReference, currentUserId, unauthorized } from "@/lib/auth";
+import { owns } from "@/lib/ownership";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any;
@@ -42,7 +44,11 @@ function calcInstallmentAmounts(
 }
 
 export async function GET() {
+  const userId = await currentUserId();
+  if (userId === null) return unauthorized();
+
   const plans = await db.installmentPlan.findMany({
+    where: { userId },
     include: {
       paymentMethod: { select: { id: true, name: true } },
       items: {
@@ -56,6 +62,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const userId = await currentUserId();
+  if (userId === null) return unauthorized();
+
   const body = await request.json();
   const {
     name, jarCode, principalAmount, totalInstallments,
@@ -72,6 +81,7 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "startDate required" }, { status: 400 });
 
   const pmIdNorm: number | null = paymentMethodId ?? null;
+  if (!(await owns(userId, "paymentMethod", pmIdNorm))) return badReference();
 
   const unit: "month" | "year" = ALLOWED_UNITS.has(interestUnit) ? interestUnit : "month";
   const rate = parseFloat(interestRate) || 0;
@@ -87,6 +97,7 @@ export async function POST(request: Request) {
   const plan = await db.$transaction(async (tx: typeof db) => {
     const created = await tx.installmentPlan.create({
       data: {
+        userId,
         name: String(name).trim(),
         jarCode: jarCode || "NEC",
         principalAmount: principal,
@@ -104,6 +115,7 @@ export async function POST(request: Request) {
       const monthDate = new Date(Date.UTC(startYear, startMonth + i, 1));
       await tx.recurringExpense.create({
         data: {
+          userId,
           name: created.name,
           jarCode: created.jarCode,
           amount: amounts[i],

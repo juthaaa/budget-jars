@@ -1,10 +1,15 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { currentUserId, unauthorized } from "@/lib/auth";
 
 export const dynamic = "force-dynamic";
 
 export async function GET() {
+  const userId = await currentUserId();
+  if (userId === null) return unauthorized();
+
   const records = await prisma.monthlyRecord.findMany({
+    where: { userId },
     orderBy: [{ year: "asc" }, { month: "asc" }],
     include: {
       expenses: { select: { amount: true, jarCode: true } },

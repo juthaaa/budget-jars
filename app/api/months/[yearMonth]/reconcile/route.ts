@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { currentUserId, notFound, scopedWrite, unauthorized } from "@/lib/auth";
 
 function parseYearMonth(ym: string) {
   const [y, m] = ym.split("-");
@@ -10,14 +11,20 @@ export async function POST(
   request: Request,
   { params }: { params: { yearMonth: string } }
 ) {
+  const userId = await currentUserId();
+  if (userId === null) return unauthorized();
+
   const { year, month } = parseYearMonth(params.yearMonth);
   const { reconciled } = await request.json();
 
-  const updated = await prisma.monthlyRecord.update({
-    where: { year_month: { year, month } },
-    data: { reconciled: Boolean(reconciled) },
-    select: { id: true, year: true, month: true, reconciled: true },
-  });
+  const updated = await scopedWrite(() =>
+    prisma.monthlyRecord.update({
+      where: { userId_year_month: { userId, year, month } },
+      data: { reconciled: Boolean(reconciled) },
+      select: { id: true, year: true, month: true, reconciled: true },
+    })
+  );
+  if (!updated) return notFound();
 
   return NextResponse.json(updated);
 }

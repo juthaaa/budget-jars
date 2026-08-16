@@ -28,8 +28,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     });
   }
 
-  // Standalone login page: no sidebar/topbar shell.
-  if (pathname === "/login") return <>{children}</>;
+  // Standalone sign-in pages: no sidebar/topbar shell. /liff is the LIFF
+  // handshake screen, which redirects onward as soon as the session exists.
+  if (pathname === "/login" || pathname === "/liff") return <>{children}</>;
 
   return (
     <div className="flex min-h-screen">

@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { badReference, currentUserId, unauthorized } from "@/lib/auth";
+import { owns } from "@/lib/ownership";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any;
@@ -13,8 +15,11 @@ function parseDate(value: unknown): Date | null {
 }
 
 export async function GET() {
+  const userId = await currentUserId();
+  if (userId === null) return unauthorized();
+
   const items = await db.recurringExpense.findMany({
-    where: { installmentPlanId: null },
+    where: { userId, installmentPlanId: null },
     include: {
       paymentMethod: { select: { id: true, name: true } },
       _count: { select: { expenses: true } },
@@ -25,6 +30,9 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const userId = await currentUserId();
+  if (userId === null) return unauthorized();
+
   const body = await request.json();
   const { name, jarCode, amount, startDate, endDate, paymentMethodId, sortOrder, intervalValue, intervalUnit, note } = body;
 
@@ -35,9 +43,11 @@ export async function POST(request: Request) {
   if (!ALLOWED_UNITS.has(unit)) {
     return NextResponse.json({ error: "intervalUnit must be 'month' or 'year'" }, { status: 400 });
   }
+  if (!(await owns(userId, "paymentMethod", paymentMethodId ?? null))) return badReference();
 
   const item = await db.recurringExpense.create({
     data: {
+      userId,
       name: String(name).trim(),
       jarCode: jarCode || "NEC",
       amount: parseFloat(amount) || 0,

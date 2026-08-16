@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { isPaymentMethodLocked } from "@/lib/settlement-lock";
+import { currentUserId, unauthorized } from "@/lib/auth";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any;
@@ -24,9 +25,14 @@ type RecurringRow = {
 
 // Recurring items active in this month (by startDate/endDate window) that have not yet
 // been seeded into it. No interval filter — every active, un-seeded item is a candidate.
-async function findCandidates(recordId: number, monthStart: Date): Promise<RecurringRow[]> {
+async function findCandidates(
+  userId: number,
+  recordId: number,
+  monthStart: Date,
+): Promise<RecurringRow[]> {
   const active: RecurringRow[] = await db.recurringExpense.findMany({
     where: {
+      userId,
       AND: [
         { OR: [{ startDate: null }, { startDate: { lte: monthStart } }] },
         { OR: [{ endDate: null }, { endDate: { gte: monthStart } }] },
@@ -54,15 +60,18 @@ export async function GET(
   _req: Request,
   { params }: { params: { yearMonth: string } },
 ) {
+  const userId = await currentUserId();
+  if (userId === null) return unauthorized();
+
   const { year, month } = parseYearMonth(params.yearMonth);
   const record = await prisma.monthlyRecord.findUnique({
-    where: { year_month: { year, month } },
+    where: { userId_year_month: { userId, year, month } },
     select: { id: true },
   });
   if (!record) return NextResponse.json({ error: "Month not found" }, { status: 404 });
 
   const monthStart = new Date(Date.UTC(year, month - 1, 1));
-  const candidates = await findCandidates(record.id, monthStart);
+  const candidates = await findCandidates(userId, record.id, monthStart);
 
   return NextResponse.json(
     candidates.map((r) => ({
@@ -83,9 +92,12 @@ export async function POST(
   request: Request,
   { params }: { params: { yearMonth: string } },
 ) {
+  const userId = await currentUserId();
+  if (userId === null) return unauthorized();
+
   const { year, month } = parseYearMonth(params.yearMonth);
   const record = await prisma.monthlyRecord.findUnique({
-    where: { year_month: { year, month } },
+    where: { userId_year_month: { userId, year, month } },
     select: { id: true },
   });
   if (!record) return NextResponse.json({ error: "Month not found" }, { status: 404 });
@@ -98,10 +110,11 @@ export async function POST(
     return NextResponse.json({ error: "ไม่มีรายการที่จะเพิ่ม" }, { status: 400 });
   }
 
-  // Re-derive candidates server-side so we never seed an item that is already present
-  // or not active this month, regardless of what ids the client sent.
+  // Re-derive candidates server-side so we never seed an item that is already present,
+  // not active this month, or owned by another user, regardless of what ids the
+  // client sent.
   const monthStart = new Date(Date.UTC(year, month - 1, 1));
-  const candidates = await findCandidates(record.id, monthStart);
+  const candidates = await findCandidates(userId, record.id, monthStart);
   const requested = new Set(ids);
   const toSeed = candidates.filter((r) => requested.has(r.id));
 
@@ -126,6 +139,7 @@ export async function POST(
   if (seedable.length > 0) {
     await db.expense.createMany({
       data: seedable.map((r) => ({
+        userId,
         monthlyRecordId: record.id,
         name: r.name,
         jarCode: r.jarCode,

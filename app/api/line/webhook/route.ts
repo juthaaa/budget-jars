@@ -13,6 +13,7 @@ import { resolveOccurredAt, type ResolvedOccurredAt } from "@/lib/transaction-ti
 import { formatNumber } from "@/lib/jar-calculator";
 import { runAfterResponse } from "@/lib/run-after-response";
 import { logAccess } from "@/lib/line/log";
+import { consumeLinkCode, LINK_COMMAND } from "@/lib/line/link-code";
 
 // Needs Node's crypto (signature verification) and Prisma — can't run on the edge.
 export const runtime = "nodejs";
@@ -25,6 +26,12 @@ export const maxDuration = 30;
 
 const FAILED_REPLY = 'ไม่เข้าใจข้อความนี้ ลองพิมพ์แบบ "ข้าวเที่ยง 60"';
 const ERROR_REPLY = "บันทึกไม่สำเร็จ ลองใหม่อีกครั้ง";
+// The LINE id is echoed back so it can be pasted straight into
+// scripts/link-line-user.ts — it isn't a secret, and it's the only way the
+// sender can find it.
+const UNLINKED_REPLY =
+  "บัญชี LINE นี้ยังไม่ได้ผูกกับผู้ใช้ในระบบ\n" +
+  'เปิดหน้า "เชื่อมต่อ LINE" ในแอป กดสร้างรหัส แล้วส่งกลับมาเป็น "link 123456"';
 
 export async function POST(request: Request) {
   // Read the raw body before anything else parses it — verifySignature needs
@@ -86,20 +93,48 @@ async function processEvent(event: LineWebhookEvent): Promise<void> {
   if (!text) return;
 
   try {
+    // "link 123456" claims this LINE account for an app user. Handled first:
+    // the sender has no linked account yet, so neither the transaction dedupe
+    // nor the user lookup below applies to it.
+    const linkMatch = text.match(LINK_COMMAND);
+    if (linkMatch) {
+      await handleLinkCommand(event, linkMatch[1]);
+      return;
+    }
+
     // LINE retries undelivered webhooks; webhookEventId is stable per
     // delivery attempt. Item 0 always exists for a processed event, so
-    // checking it is enough to dedupe the whole batch on retry.
+    // checking it is enough to dedupe the whole batch on retry. This runs
+    // before the user lookup because externalId is unique across all users.
     const already = await prisma.transaction.findUnique({
       where: { externalId: externalIdFor(event.webhookEventId, 0) },
       select: { id: true },
     });
     if (already) return;
 
+    // No session cookie here, so the sender's LINE id is the only thing tying
+    // this message to an account. Without a match there is no one to bill the
+    // transaction to — tell them how to link rather than dropping it silently.
+    const lineUserId = event.source?.userId;
+    const user = lineUserId
+      ? await prisma.user.findUnique({ where: { lineUserId }, select: { id: true } })
+      : null;
+    if (!user) {
+      console.warn("[line webhook] no user linked to LINE id", lineUserId ?? "(missing)");
+      if (event.replyToken) {
+        await replyText(event.replyToken, lineUserId ? UNLINKED_REPLY : ERROR_REPLY);
+      }
+      return;
+    }
+    const userId = user.id;
+
     const jars = await prisma.jar.findMany({
+      where: { userId },
       select: { code: true, name: true },
       orderBy: { sortOrder: "asc" },
     });
     const paymentMethods = await prisma.paymentMethod.findMany({
+      where: { userId },
       select: { code: true, name: true },
       orderBy: { sortOrder: "asc" },
     });
@@ -122,7 +157,7 @@ async function processEvent(event: LineWebhookEvent): Promise<void> {
       const parsed = parsedList[i];
       const status = parsed.confidence > 0 && parsed.amount > 0 ? "pending" : "failed";
       const resolved = resolveOccurredAt(parsed.occurredAt);
-      const row = await createTransactionRow(event, i, text, parsed, status, resolved);
+      const row = await createTransactionRow(userId, event, i, text, parsed, status, resolved);
       if (!row) continue; // a concurrent delivery already saved this item
       anySaved = true;
       if (status === "pending") {
@@ -155,6 +190,35 @@ async function processEvent(event: LineWebhookEvent): Promise<void> {
   }
 }
 
+// The LINE userId here comes from a body whose signature was already verified,
+// so the sender cannot claim to be someone else. Pair that with a code only a
+// logged-in app user could have produced and the link is safe in both
+// directions — see lib/line/link-code.ts.
+async function handleLinkCommand(event: LineWebhookEvent, code: string): Promise<void> {
+  const lineUserId = event.source?.userId;
+  if (!lineUserId) {
+    if (event.replyToken) await replyText(event.replyToken, ERROR_REPLY);
+    return;
+  }
+
+  const result = await consumeLinkCode(code, lineUserId);
+  const reply = {
+    linked: `✅ เชื่อมต่อสำเร็จ`,
+    already: "บัญชี LINE นี้เชื่อมต่ออยู่แล้ว",
+    taken: "บัญชี LINE นี้ถูกเชื่อมกับผู้ใช้อื่นอยู่ ยกเลิกการเชื่อมต่อเดิมก่อน",
+    invalid: "รหัสไม่ถูกต้องหรือหมดอายุแล้ว กดสร้างรหัสใหม่ในแอป",
+  }[result.status];
+
+  if (event.replyToken) {
+    await replyText(
+      event.replyToken,
+      result.status === "linked"
+        ? `${reply} — บันทึกเข้าบัญชี "${result.username}"\nพิมพ์รายการได้เลย เช่น "ข้าวเที่ยง 60"`
+        : reply,
+    );
+  }
+}
+
 // Used when the classifier itself threw (bad schema, no tool_use block) —
 // there's no valid ParsedTransaction to fall back to, so persist the raw
 // text as its own "name" with a zero amount, matching the shape the AI
@@ -173,6 +237,7 @@ function degenerateParsed(text: string): ParsedTransaction {
 }
 
 async function createTransactionRow(
+  userId: number,
   event: LineWebhookEvent,
   index: number,
   rawText: string,
@@ -184,6 +249,7 @@ async function createTransactionRow(
   try {
     return await prisma.transaction.create({
       data: {
+        userId,
         source: "line",
         externalId: externalIdFor(event.webhookEventId, index),
         rawText,

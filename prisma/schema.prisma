@@ -9,18 +9,53 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// Every table below carries a `userId`. There is no shared/global data: a row is
+// only ever visible to the user that owns it, and every API route scopes its
+// queries by the session's uid (see lib/auth.ts). Codes that used to be globally
+// unique (jar code, payment-method code, …) are now unique per user, so two users
+// can both have a "NEC" jar.
 model User {
-  id           Int      @id @default(autoincrement())
-  username     String   @unique
-  passwordHash String
-  createdAt    DateTime @default(now())
+  id                    Int       @id @default(autoincrement())
+  username              String    @unique
+  passwordHash          String
+  // LINE Messaging API userId. The webhook has no session cookie, so this is the
+  // only way it can tell whose transaction a message is. Set either by the
+  // in-chat link code below or by scripts/link-line-user.ts.
+  lineUserId            String?   @unique
+  // One-shot code the user generates on /line and sends to the bot as
+  // "link 123456" — that message arrives with a verified LINE userId, which is
+  // what makes the claim trustworthy. Both fields are cleared once consumed.
+  lineLinkCode          String?   @unique
+  lineLinkCodeExpiresAt DateTime?
+  createdAt             DateTime  @default(now())
+
+  bankAccounts       BankAccount[]
+  expenseMasters     ExpenseMaster[]
+  installmentPlans   InstallmentPlan[]
+  recurringExpenses  RecurringExpense[]
+  jars               Jar[]
+  monthlyRecords     MonthlyRecord[]
+  incomeTypes        IncomeType[]
+  paymentMethods     PaymentMethod[]
+  paymentSettlements MonthlyPaymentSettlement[]
+  bankTransfers      MonthlyBankTransfer[]
+  monthlyIncomes     MonthlyIncome[]
+  deductionTypes     DeductionType[]
+  deductionRules     DeductionRule[]
+  monthlyDeductions  MonthlyDeduction[]
+  jarAllocations     JarAllocation[]
+  expenses           Expense[]
+  salaryHistory      SalaryHistory[]
+  transactions       Transaction[]
 }
 
 model BankAccount {
-  id             Int             @id @default(autoincrement())
-  name           String
-  accountNumber  String?
-  color          String          @default("#6366f1")
+  id               Int                   @id @default(autoincrement())
+  userId           Int
+  user             User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name             String
+  accountNumber    String?
+  color            String                @default("#6366f1")
   jars             Jar[]
   expenses         Expense[]
   expenseMasters   ExpenseMaster[]
@@ -28,19 +63,27 @@ model BankAccount {
   bankTransfers    MonthlyBankTransfer[]
   paymentMethods   PaymentMethod[]
   unassignedMonths MonthlyRecord[]
+
+  @@index([userId])
 }
 
 model ExpenseMaster {
   id             Int          @id @default(autoincrement())
+  userId         Int
+  user           User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   name           String
   defaultJarCode String?
   bankAccountId  Int?
   bankAccount    BankAccount? @relation(fields: [bankAccountId], references: [id], onDelete: SetNull)
   sortOrder      Int          @default(0)
+
+  @@index([userId])
 }
 
 model InstallmentPlan {
   id                Int                @id @default(autoincrement())
+  userId            Int
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   name              String
   jarCode           String
   principalAmount   Float
@@ -53,10 +96,14 @@ model InstallmentPlan {
   note              String?
   sortOrder         Int                @default(0)
   items             RecurringExpense[]
+
+  @@index([userId])
 }
 
 model RecurringExpense {
   id                Int              @id @default(autoincrement())
+  userId            Int
+  user              User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   name              String
   jarCode           String
   amount            Float
@@ -72,12 +119,16 @@ model RecurringExpense {
   installmentPlan   InstallmentPlan? @relation(fields: [installmentPlanId], references: [id], onDelete: Cascade)
   installmentNumber Int?
   expenses          Expense[]
+
+  @@index([userId])
 }
 
 model Jar {
   id            Int             @id @default(autoincrement())
+  userId        Int
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   name          String
-  code          String          @unique
+  code          String
   jarType       String          @default("a")
   bankAccountId Int?
   bankAccount   BankAccount?    @relation(fields: [bankAccountId], references: [id])
@@ -86,40 +137,53 @@ model Jar {
   isNec         Boolean         @default(false)
   sortOrder     Int             @default(0)
   allocations   JarAllocation[]
+
+  @@unique([userId, code])
+  @@index([userId])
 }
 
 model MonthlyRecord {
-  id                 Int                        @id @default(autoincrement())
-  year               Int
-  month              Int
-  necAmount          Float                      @default(0)
-  necIsManual        Boolean                    @default(false)
-  reconciled         Boolean                    @default(false)
+  id                      Int                        @id @default(autoincrement())
+  userId                  Int
+  user                    User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  year                    Int
+  month                   Int
+  necAmount               Float                      @default(0)
+  necIsManual             Boolean                    @default(false)
+  reconciled              Boolean                    @default(false)
   unassignedBankAccountId Int?
-  unassignedBankAccount   BankAccount?          @relation(fields: [unassignedBankAccountId], references: [id], onDelete: SetNull)
-  allocations        JarAllocation[]
-  expenses           Expense[]
-  deductions         MonthlyDeduction[]
-  monthlyIncomes     MonthlyIncome[]
-  paymentSettlements MonthlyPaymentSettlement[]
-  bankTransfers      MonthlyBankTransfer[]
+  unassignedBankAccount   BankAccount?               @relation(fields: [unassignedBankAccountId], references: [id], onDelete: SetNull)
+  allocations             JarAllocation[]
+  expenses                Expense[]
+  deductions              MonthlyDeduction[]
+  monthlyIncomes          MonthlyIncome[]
+  paymentSettlements      MonthlyPaymentSettlement[]
+  bankTransfers           MonthlyBankTransfer[]
 
-  @@unique([year, month])
+  @@unique([userId, year, month])
+  @@index([userId])
 }
 
 model IncomeType {
   id             Int             @id @default(autoincrement())
+  userId         Int
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   name           String
-  code           String          @unique
+  code           String
   excludeFromNet Boolean         @default(false)
   sortOrder      Int             @default(0)
   monthlyIncomes MonthlyIncome[]
+
+  @@unique([userId, code])
+  @@index([userId])
 }
 
 model PaymentMethod {
   id                 Int                        @id @default(autoincrement())
+  userId             Int
+  user               User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
   name               String
-  code               String                     @unique
+  code               String
   sortOrder          Int                        @default(0)
   bankAccountId      Int?
   bankAccount        BankAccount?               @relation(fields: [bankAccountId], references: [id], onDelete: SetNull)
@@ -128,10 +192,15 @@ model PaymentMethod {
   recurringExpenses  RecurringExpense[]
   installmentPlans   InstallmentPlan[]
   monthlySettlements MonthlyPaymentSettlement[]
+
+  @@unique([userId, code])
+  @@index([userId])
 }
 
 model MonthlyPaymentSettlement {
   id              Int           @id @default(autoincrement())
+  userId          Int
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   monthlyRecordId Int
   monthlyRecord   MonthlyRecord @relation(fields: [monthlyRecordId], references: [id], onDelete: Cascade)
   paymentMethodId Int
@@ -142,10 +211,13 @@ model MonthlyPaymentSettlement {
   updatedAt       DateTime      @updatedAt
 
   @@unique([monthlyRecordId, paymentMethodId])
+  @@index([userId])
 }
 
 model MonthlyBankTransfer {
   id              Int           @id @default(autoincrement())
+  userId          Int
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   monthlyRecordId Int
   monthlyRecord   MonthlyRecord @relation(fields: [monthlyRecordId], references: [id], onDelete: Cascade)
   bankAccountId   Int
@@ -155,10 +227,13 @@ model MonthlyBankTransfer {
   updatedAt       DateTime      @updatedAt
 
   @@unique([monthlyRecordId, bankAccountId])
+  @@index([userId])
 }
 
 model MonthlyIncome {
   id              Int           @id @default(autoincrement())
+  userId          Int
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   monthlyRecordId Int
   monthlyRecord   MonthlyRecord @relation(fields: [monthlyRecordId], references: [id], onDelete: Cascade)
   incomeTypeId    Int
@@ -166,28 +241,40 @@ model MonthlyIncome {
   amount          Float         @default(0)
 
   @@unique([monthlyRecordId, incomeTypeId])
+  @@index([userId])
 }
 
 model DeductionType {
   id                Int                @id @default(autoincrement())
+  userId            Int
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
   name              String
-  code              String             @unique
+  code              String
   sortOrder         Int                @default(0)
   rules             DeductionRule[]
   monthlyDeductions MonthlyDeduction[]
+
+  @@unique([userId, code])
+  @@index([userId])
 }
 
 model DeductionRule {
   id              Int           @id @default(autoincrement())
+  userId          Int
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   deductionTypeId Int
   deductionType   DeductionType @relation(fields: [deductionTypeId], references: [id], onDelete: Cascade)
   valueType       String        @default("amount")
   value           Float         @default(0)
   effectiveDate   DateTime
+
+  @@index([userId])
 }
 
 model MonthlyDeduction {
   id              Int           @id @default(autoincrement())
+  userId          Int
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   monthlyRecordId Int
   monthlyRecord   MonthlyRecord @relation(fields: [monthlyRecordId], references: [id], onDelete: Cascade)
   deductionTypeId Int
@@ -195,10 +282,13 @@ model MonthlyDeduction {
   amount          Float         @default(0)
 
   @@unique([monthlyRecordId, deductionTypeId])
+  @@index([userId])
 }
 
 model JarAllocation {
   id              Int           @id @default(autoincrement())
+  userId          Int
+  user            User          @relation(fields: [userId], references: [id], onDelete: Cascade)
   monthlyRecordId Int
   monthlyRecord   MonthlyRecord @relation(fields: [monthlyRecordId], references: [id], onDelete: Cascade)
   jarId           Int
@@ -209,10 +299,13 @@ model JarAllocation {
   bankAccount     BankAccount?  @relation(fields: [bankAccountId], references: [id], onDelete: SetNull)
 
   @@unique([monthlyRecordId, jarId])
+  @@index([userId])
 }
 
 model Expense {
   id                 Int               @id @default(autoincrement())
+  userId             Int
+  user               User              @relation(fields: [userId], references: [id], onDelete: Cascade)
   monthlyRecordId    Int
   monthlyRecord      MonthlyRecord     @relation(fields: [monthlyRecordId], references: [id], onDelete: Cascade)
   name               String
@@ -228,32 +321,43 @@ model Expense {
   createdAt          DateTime          @default(now())
   recurringExpenseId Int?
   recurringExpense   RecurringExpense? @relation(fields: [recurringExpenseId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
 }
 
 model SalaryHistory {
   id            Int      @id @default(autoincrement())
+  userId        Int
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   effectiveDate DateTime
   amount        Float
+
+  @@index([userId])
 }
 
 // Transactions captured from outside the web app (LINE bot for now, email later).
-// Deliberately standalone — no relations to the models above — so the bot can record
-// a message even when its MonthlyRecord does not exist yet. Phase 2 seeds these into
-// Expense once the month is created.
+// Deliberately standalone — no relations to the models above (apart from the
+// owning User) — so the bot can record a message even when its MonthlyRecord does
+// not exist yet. Phase 2 seeds these into Expense once the month is created.
 model Transaction {
   id         Int     @id @default(autoincrement())
+  userId     Int
+  user       User    @relation(fields: [userId], references: [id], onDelete: Cascade)
   source     String  @default("line") // line | email | manual
-  externalId String? @unique // LINE webhookEventId — dedupe on retry
+  // LINE webhookEventId — globally unique across users, so it stays a plain
+  // unique index rather than a per-user one; that lets the webhook dedupe a
+  // retried delivery before it has resolved which user sent it.
+  externalId String? @unique
   rawText    String // original user message
   parsed     String? // raw JSON from the classifier, for replay after prompt changes
   confidence Float?
   status     String  @default("pending") // pending | failed | ignored ("applied" in phase 2)
 
-  direction String // "in" (income) | "out" (expense)
-  name      String
-  amount    Float // always positive — direction carries the sign
-  jarCode   String? // suggested by AI, validated against Jar.code
-  note      String?
+  direction         String // "in" (income) | "out" (expense)
+  name              String
+  amount            Float // always positive — direction carries the sign
+  jarCode           String? // suggested by AI, validated against Jar.code
+  note              String?
   paymentMethodCode String? // suggested by AI, validated against PaymentMethod.code
 
   // Kept for phase 2. Plain Ints, not FKs, to avoid coupling with the existing models.
@@ -267,6 +371,7 @@ model Transaction {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([year, month, status])
-  @@index([direction, occurredAt])
+  @@index([userId, year, month, status])
+  @@index([userId, direction, occurredAt])
+  @@index([userId])
 }

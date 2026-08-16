@@ -1,11 +1,16 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { currentUserId, unauthorized } from "@/lib/auth";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any;
 
 export async function GET() {
+  const userId = await currentUserId();
+  if (userId === null) return unauthorized();
+
   const records = await prisma.monthlyRecord.findMany({
+    where: { userId },
     orderBy: [{ year: "desc" }, { month: "desc" }],
     include: {
       allocations: { include: { jar: true } },
@@ -29,11 +34,14 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
+  const userId = await currentUserId();
+  if (userId === null) return unauthorized();
+
   const body = await request.json();
   const { year, month } = body;
 
   const existing = await prisma.monthlyRecord.findUnique({
-    where: { year_month: { year, month } },
+    where: { userId_year_month: { userId, year, month } },
   });
   if (existing) {
     return NextResponse.json({ error: "Month already exists" }, { status: 400 });
@@ -41,18 +49,19 @@ export async function POST(request: Request) {
 
   // Get latest salary for pre-fill
   const latestSalary = await prisma.salaryHistory.findFirst({
-    where: { effectiveDate: { lte: new Date(Date.UTC(year, month - 1, 1)) } },
+    where: { userId, effectiveDate: { lte: new Date(Date.UTC(year, month - 1, 1)) } },
     orderBy: { effectiveDate: "desc" },
   });
 
   const salaryFromHistory = latestSalary?.amount ?? 0;
 
   // Get NEC jar default %
-  const necJar = await prisma.jar.findFirst({ where: { isNec: true } });
+  const necJar = await prisma.jar.findFirst({ where: { userId, isNec: true } });
   const necAmount = necJar ? salaryFromHistory * (necJar.percentage / 100) : 0;
 
   const record = await prisma.monthlyRecord.create({
     data: {
+      userId,
       year,
       month,
       necAmount,
@@ -61,10 +70,11 @@ export async function POST(request: Request) {
   });
 
   // Create default jar allocations
-  const jars = await prisma.jar.findMany();
+  const jars = await prisma.jar.findMany({ where: { userId } });
   const remaining = salaryFromHistory - necAmount;
   await prisma.jarAllocation.createMany({
     data: jars.map((jar) => ({
+      userId,
       monthlyRecordId: record.id,
       jarId: jar.id,
       amount: jar.isNec ? necAmount : remaining * (jar.percentage / 100),
@@ -77,6 +87,7 @@ export async function POST(request: Request) {
 
   const allRecurring = await db.recurringExpense.findMany({
     where: {
+      userId,
       AND: [
         { OR: [{ startDate: null }, { startDate: { lte: monthStart } }] },
         { OR: [{ endDate: null }, { endDate: { gte: monthStart } }] },
@@ -120,6 +131,7 @@ export async function POST(request: Request) {
   if (filtered.length > 0) {
     await db.expense.createMany({
       data: filtered.map((r: RecurringRow) => ({
+        userId,
         monthlyRecordId: record.id,
         name: r.name,
         jarCode: r.jarCode,

@@ -44,6 +44,8 @@ next-env.d.ts
 /prisma/dev.db-journal
 /prisma/dev.db-wal
 /prisma/dev.db-shm
+# pre-migration snapshots taken by scripts/apply-migration-local.ts
+/prisma/dev.db.bak-*
 
 # migration / seed / debug scripts (local only — others restore via dev.db copy)
 /scripts/

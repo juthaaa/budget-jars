@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { calculateJarAllocations } from "@/lib/jar-calculator";
+import { badReference, currentUserId, notFound, scopedWrite, unauthorized } from "@/lib/auth";
+import { owns } from "@/lib/ownership";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any;
@@ -16,9 +18,12 @@ export async function GET(
   _req: Request,
   { params }: { params: { yearMonth: string } }
 ) {
+  const userId = await currentUserId();
+  if (userId === null) return unauthorized();
+
   const { year, month } = parseYearMonth(params.yearMonth);
   const record = await prisma.monthlyRecord.findUnique({
-    where: { year_month: { year, month } },
+    where: { userId_year_month: { userId, year, month } },
     include: {
       allocations: { include: { jar: { include: { bankAccount: true } }, bankAccount: true } },
       expenses: {
@@ -44,18 +49,19 @@ export async function GET(
       },
     },
   });
-  if (!record) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!record) return notFound();
 
   // Look up effective salary from SalaryHistory (used for SALARY default + %-type deduction rules)
   const monthStart = new Date(Date.UTC(year, month - 1, 1));
   const historySalary = await prisma.salaryHistory.findFirst({
-    where: { effectiveDate: { lte: monthStart } },
+    where: { userId, effectiveDate: { lte: monthStart } },
     orderBy: { effectiveDate: "desc" },
   });
   const effectiveSalary = historySalary?.amount ?? 0;
 
   // For each deduction type, return saved amount OR computed default from latest rule
   const types = await prisma.deductionType.findMany({
+    where: { userId },
     orderBy: [{ sortOrder: "asc" }, { id: "asc" }],
   });
 
@@ -66,7 +72,7 @@ export async function GET(
     let isDefault = false;
     if (!saved) {
       const rule = await prisma.deductionRule.findFirst({
-        where: { deductionTypeId: type.id, effectiveDate: { lte: monthStart } },
+        where: { userId, deductionTypeId: type.id, effectiveDate: { lte: monthStart } },
         orderBy: { effectiveDate: "desc" },
       });
       if (rule) {
@@ -87,6 +93,7 @@ export async function GET(
 
   // Build incomeList (similar to deductionsList)
   const incomeTypes: IncomeTypeRow[] = await db.incomeType.findMany({
+    where: { userId },
     orderBy: [{ sortOrder: "asc" }, { id: "asc" }],
   });
 
@@ -125,6 +132,9 @@ export async function PATCH(
   request: Request,
   { params }: { params: { yearMonth: string } }
 ) {
+  const userId = await currentUserId();
+  if (userId === null) return unauthorized();
+
   const { year, month } = parseYearMonth(params.yearMonth);
   const body = await request.json();
 
@@ -141,7 +151,7 @@ export async function PATCH(
   let grossIncome = body.grossIncome ?? 0;
 
   if (Array.isArray(incomes) && incomes.length > 0) {
-    const incomeTypes: IncomeTypeRow[] = await db.incomeType.findMany();
+    const incomeTypes: IncomeTypeRow[] = await db.incomeType.findMany({ where: { userId } });
     const typeMap = new Map<number, IncomeTypeRow>(incomeTypes.map((t) => [t.id, t]));
     grossIncome = incomes.reduce((s: number, i: { incomeTypeId: number; amount: number }) => {
       const t = typeMap.get(i.incomeTypeId);
@@ -156,15 +166,15 @@ export async function PATCH(
 
   // Existing record + allocations + transfers — needed to enforce transfer locks
   const existing = await prisma.monthlyRecord.findUnique({
-    where: { year_month: { year, month } },
+    where: { userId_year_month: { userId, year, month } },
     include: {
       allocations: true,
       bankTransfers: { where: { transferredAt: { not: null } }, select: { bankAccountId: true } },
     },
   });
-  if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!existing) return notFound();
 
-  const jars = await prisma.jar.findMany();
+  const jars = await prisma.jar.findMany({ where: { userId } });
   const lockedBankIds = new Set<number>(existing.bankTransfers.map((t) => t.bankAccountId));
   const existingAllocByJar = new Map(existing.allocations.map((a) => [a.jarId, a]));
   // Effective bank of a jar = saved per-month override ?? jar default
@@ -178,21 +188,25 @@ export async function PATCH(
   const necLocked = necJar ? isJarLocked(necJar) : false;
 
   const updatedRecord = await prisma.monthlyRecord.update({
-    where: { year_month: { year, month } },
+    where: { userId_year_month: { userId, year, month } },
     // NEC bank already transferred → keep saved NEC amount untouched
     data: necLocked ? {} : { necAmount, necIsManual },
   });
   const effectiveNecAmount = necLocked ? existing.necAmount : necAmount;
 
-  // Replace all monthly incomes
+  // Replace all monthly incomes. The incoming type ids are checked against this
+  // user's own types — an unknown id would otherwise attach a foreign row here.
   if (Array.isArray(incomes)) {
     await db.monthlyIncome.deleteMany({ where: { monthlyRecordId: updatedRecord.id } });
     for (const i of incomes) {
       if (!i.incomeTypeId) continue;
+      const incomeTypeId = parseInt(i.incomeTypeId);
+      if (!(await owns(userId, "incomeType", incomeTypeId))) return badReference();
       await db.monthlyIncome.create({
         data: {
+          userId,
           monthlyRecordId: updatedRecord.id,
-          incomeTypeId: parseInt(i.incomeTypeId),
+          incomeTypeId,
           amount: parseFloat(i.amount) || 0,
         },
       });
@@ -204,10 +218,13 @@ export async function PATCH(
     await prisma.monthlyDeduction.deleteMany({ where: { monthlyRecordId: updatedRecord.id } });
     for (const d of deductions) {
       if (!d.deductionTypeId) continue;
+      const deductionTypeId = parseInt(d.deductionTypeId);
+      if (!(await owns(userId, "deductionType", deductionTypeId))) return badReference();
       await prisma.monthlyDeduction.create({
         data: {
+          userId,
           monthlyRecordId: updatedRecord.id,
-          deductionTypeId: parseInt(d.deductionTypeId),
+          deductionTypeId,
           amount: parseFloat(d.amount) || 0,
         },
       });
@@ -225,7 +242,9 @@ export async function PATCH(
   const bankOverridesProvided = jarBankAccounts && typeof jarBankAccounts === "object";
   if (bankOverridesProvided) {
     for (const [idStr, accId] of Object.entries(jarBankAccounts as Record<string, unknown>)) {
-      bankOverrides[parseInt(idStr)] = accId === null || accId === undefined ? null : Number(accId);
+      const bankAccountId = accId === null || accId === undefined ? null : Number(accId);
+      if (!(await owns(userId, "bankAccount", bankAccountId))) return badReference();
+      bankOverrides[parseInt(idStr)] = bankAccountId;
     }
   }
 
@@ -241,6 +260,7 @@ export async function PATCH(
     await prisma.jarAllocation.upsert({
       where: { monthlyRecordId_jarId: { monthlyRecordId: updatedRecord.id, jarId: alloc.jarId } },
       create: {
+        userId,
         monthlyRecordId: updatedRecord.id,
         jarId: alloc.jarId,
         amount: alloc.amount,
@@ -262,8 +282,12 @@ export async function DELETE(
   _req: Request,
   { params }: { params: { yearMonth: string } }
 ) {
+  const userId = await currentUserId();
+  if (userId === null) return unauthorized();
+
   const { year, month } = parseYearMonth(params.yearMonth);
-  await prisma.monthlyRecord.delete({ where: { year_month: { year, month } } });
+  const { count } = await prisma.monthlyRecord.deleteMany({ where: { userId, year, month } });
+  if (count === 0) return notFound();
   return NextResponse.json({ ok: true });
 }
 
@@ -271,6 +295,9 @@ export async function PUT(
   request: Request,
   { params }: { params: { yearMonth: string } }
 ) {
+  const userId = await currentUserId();
+  if (userId === null) return unauthorized();
+
   const { year, month } = parseYearMonth(params.yearMonth);
   const { newYear, newMonth } = await request.json();
 
@@ -279,16 +306,19 @@ export async function PUT(
   }
 
   const conflict = await prisma.monthlyRecord.findUnique({
-    where: { year_month: { year: newYear, month: newMonth } },
+    where: { userId_year_month: { userId, year: newYear, month: newMonth } },
   });
   if (conflict) {
     return NextResponse.json({ error: "เดือนนั้นมีข้อมูลอยู่แล้ว" }, { status: 400 });
   }
 
-  const updated = await prisma.monthlyRecord.update({
-    where: { year_month: { year, month } },
-    data: { year: newYear, month: newMonth },
-  });
+  const updated = await scopedWrite(() =>
+    prisma.monthlyRecord.update({
+      where: { userId_year_month: { userId, year, month } },
+      data: { year: newYear, month: newMonth },
+    })
+  );
+  if (!updated) return notFound();
 
   return NextResponse.json(updated);
 }

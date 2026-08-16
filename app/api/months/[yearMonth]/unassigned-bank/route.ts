@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { badReference, currentUserId, unauthorized } from "@/lib/auth";
+import { owns } from "@/lib/ownership";
 
 function parseYearMonth(ym: string) {
   const [y, m] = ym.split("-");
@@ -10,11 +12,14 @@ export async function PATCH(
   request: Request,
   { params }: { params: { yearMonth: string } },
 ) {
+  const userId = await currentUserId();
+  if (userId === null) return unauthorized();
+
   const { year, month } = parseYearMonth(params.yearMonth);
   const body = await request.json();
 
   const record = await prisma.monthlyRecord.findUnique({
-    where: { year_month: { year, month } },
+    where: { userId_year_month: { userId, year, month } },
     select: { id: true },
   });
   if (!record) return NextResponse.json({ error: "Month not found" }, { status: 404 });
@@ -23,6 +28,7 @@ export async function PATCH(
     body.bankAccountId === null || body.bankAccountId === undefined
       ? null
       : Number(body.bankAccountId);
+  if (!(await owns(userId, "bankAccount", bankAccountId))) return badReference();
 
   const updated = await prisma.monthlyRecord.update({
     where: { id: record.id },

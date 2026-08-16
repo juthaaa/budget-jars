@@ -12,6 +12,7 @@ import {
   CreditCard,
   Repeat,
   MinusCircle,
+  MessageCircle,
   ChevronsLeft,
   ChevronsRight,
   X,
@@ -47,6 +48,7 @@ const GROUPS: NavGroup[] = [
       { href: "/payment-methods/manage", label: "วิธีจ่าย", icon: CreditCard },
       { href: "/recurring-expenses/manage", label: "รายการประจำ", icon: Repeat },
       { href: "/deductions/manage", label: "รายการหัก", icon: MinusCircle },
+      { href: "/line", label: "เชื่อมต่อ LINE", icon: MessageCircle },
     ],
   },
 ];

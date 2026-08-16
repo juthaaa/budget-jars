@@ -2,8 +2,13 @@ import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { resolveOccurredAt } from "@/lib/transaction-time";
+import { badReference, currentUserId, unauthorized } from "@/lib/auth";
+import { owns } from "@/lib/ownership";
 
 export async function GET(request: Request) {
+  const userId = await currentUserId();
+  if (userId === null) return unauthorized();
+
   const { searchParams } = new URL(request.url);
   const status = searchParams.get("status");
   const direction = searchParams.get("direction");
@@ -11,7 +16,7 @@ export async function GET(request: Request) {
   const month = searchParams.get("month");
   const date = searchParams.get("date"); // YYYY-MM-DD, exact day (face-value, see transaction-time.ts)
 
-  const where: Prisma.TransactionWhereInput = {};
+  const where: Prisma.TransactionWhereInput = { userId };
   if (status) where.status = status;
   if (direction) where.direction = direction;
   if (year) where.year = parseInt(year);
@@ -32,6 +37,9 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  const userId = await currentUserId();
+  if (userId === null) return unauthorized();
+
   const body = await request.json();
 
   if (!body.name || typeof body.name !== "string") {
@@ -48,11 +56,15 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "กรุณาระบุวันที่-เวลา" }, { status: 400 });
   }
 
+  const paymentMethodId = body.paymentMethodId ? Number(body.paymentMethodId) : null;
+  if (!(await owns(userId, "paymentMethod", paymentMethodId))) return badReference();
+
   const { occurredAt, year, month } = resolveOccurredAt(body.occurredAt);
   const rawText = `[manual] ${body.direction === "out" ? "จ่าย" : "รับ"} ${body.name} ${amount}`;
 
   const created = await prisma.transaction.create({
     data: {
+      userId,
       source: "manual",
       rawText,
       status: "pending",
@@ -60,7 +72,7 @@ export async function POST(request: Request) {
       name: body.name,
       amount,
       note: body.note || null,
-      paymentMethodId: body.paymentMethodId ? Number(body.paymentMethodId) : null,
+      paymentMethodId,
       occurredAt,
       year,
       month,

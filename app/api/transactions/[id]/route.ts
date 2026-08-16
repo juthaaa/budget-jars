@@ -2,11 +2,16 @@ import { NextResponse } from "next/server";
 import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/db";
 import { resolveOccurredAt } from "@/lib/transaction-time";
+import { badReference, currentUserId, notFound, scopedWrite, unauthorized } from "@/lib/auth";
+import { owns } from "@/lib/ownership";
 
 export async function PATCH(
   request: Request,
   { params }: { params: { id: string } }
 ) {
+  const userId = await currentUserId();
+  if (userId === null) return unauthorized();
+
   const body = await request.json();
   const data: Prisma.TransactionUpdateInput = {};
 
@@ -33,7 +38,9 @@ export async function PATCH(
     data.note = body.note || null;
   }
   if ("paymentMethodId" in body) {
-    data.paymentMethodId = body.paymentMethodId ? Number(body.paymentMethodId) : null;
+    const paymentMethodId = body.paymentMethodId ? Number(body.paymentMethodId) : null;
+    if (!(await owns(userId, "paymentMethod", paymentMethodId))) return badReference();
+    data.paymentMethodId = paymentMethodId;
   }
   if ("status" in body) {
     if (body.status !== "pending" && body.status !== "ignored") {
@@ -51,10 +58,13 @@ export async function PATCH(
     data.month = month;
   }
 
-  const updated = await prisma.transaction.update({
-    where: { id: parseInt(params.id) },
-    data,
-  });
+  const updated = await scopedWrite(() =>
+    prisma.transaction.update({
+      where: { id: parseInt(params.id), userId },
+      data,
+    })
+  );
+  if (!updated) return notFound();
   return NextResponse.json(updated);
 }
 
@@ -62,6 +72,12 @@ export async function DELETE(
   _req: Request,
   { params }: { params: { id: string } }
 ) {
-  await prisma.transaction.delete({ where: { id: parseInt(params.id) } });
+  const userId = await currentUserId();
+  if (userId === null) return unauthorized();
+
+  const deleted = await scopedWrite(() =>
+    prisma.transaction.delete({ where: { id: parseInt(params.id), userId } })
+  );
+  if (!deleted) return notFound();
   return NextResponse.json({ ok: true });
 }

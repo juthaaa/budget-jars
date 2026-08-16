@@ -14,6 +14,9 @@ export interface LineWebhookEvent {
   type: string;
   webhookEventId: string;
   replyToken?: string;
+  // Who sent it. `userId` is this channel's opaque id for the sender — the
+  // webhook matches it against User.lineUserId to decide whose books to write to.
+  source?: { type: string; userId?: string; groupId?: string; roomId?: string };
   message?: { type: string; id: string; text?: string };
 }
 

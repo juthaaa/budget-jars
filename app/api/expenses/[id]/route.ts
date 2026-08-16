@@ -1,19 +1,24 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { isPaymentMethodLocked } from "@/lib/settlement-lock";
+import { badReference, currentUserId, notFound, unauthorized } from "@/lib/auth";
+import { owns } from "@/lib/ownership";
 
 export async function PATCH(
   request: Request,
   { params }: { params: { id: string } }
 ) {
+  const userId = await currentUserId();
+  if (userId === null) return unauthorized();
+
   const id = parseInt(params.id);
   const body = await request.json();
 
-  const existing = await prisma.expense.findUnique({
-    where: { id },
+  const existing = await prisma.expense.findFirst({
+    where: { id, userId },
     select: { monthlyRecordId: true, paymentMethodId: true, isLocked: true },
   });
-  if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!existing) return notFound();
 
   // Lock toggle: body contains only `isLocked` → allow toggling on/off
   // (still blocked if the expense's payment method has been reconciled).
@@ -57,13 +62,21 @@ export async function PATCH(
     );
   }
 
+  const bankAccountId: number | null = body.bankAccountId || null;
+  if (
+    !(await owns(userId, "bankAccount", bankAccountId)) ||
+    !(await owns(userId, "paymentMethod", nextPaymentMethodId))
+  ) {
+    return badReference();
+  }
+
   const expense = await prisma.expense.update({
     where: { id },
     data: {
       name: body.name,
       jarCode: body.jarCode,
       amount: parseFloat(body.amount),
-      bankAccountId: body.bankAccountId || null,
+      bankAccountId,
       note: body.note || null,
       paymentMethodId: nextPaymentMethodId,
     },
@@ -76,12 +89,15 @@ export async function DELETE(
   _req: Request,
   { params }: { params: { id: string } }
 ) {
+  const userId = await currentUserId();
+  if (userId === null) return unauthorized();
+
   const id = parseInt(params.id);
-  const existing = await prisma.expense.findUnique({
-    where: { id },
+  const existing = await prisma.expense.findFirst({
+    where: { id, userId },
     select: { monthlyRecordId: true, paymentMethodId: true, isLocked: true },
   });
-  if (!existing) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!existing) return notFound();
 
   if (existing.isLocked) {
     return NextResponse.json(

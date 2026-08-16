@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
 import { isPaymentMethodLocked } from "@/lib/settlement-lock";
+import { badReference, currentUserId, unauthorized } from "@/lib/auth";
+import { owns } from "@/lib/ownership";
 
 function parseYearMonth(ym: string) {
   const [y, m] = ym.split("-");
@@ -11,11 +13,14 @@ export async function POST(
   request: Request,
   { params }: { params: { yearMonth: string } }
 ) {
+  const userId = await currentUserId();
+  if (userId === null) return unauthorized();
+
   const { year, month } = parseYearMonth(params.yearMonth);
   const body = await request.json();
 
   const record = await prisma.monthlyRecord.findUnique({
-    where: { year_month: { year, month } },
+    where: { userId_year_month: { userId, year, month } },
   });
   if (!record) return NextResponse.json({ error: "Month not found" }, { status: 404 });
 
@@ -32,14 +37,22 @@ export async function POST(
   // Validate payment-method locks once per distinct payment method.
   const distinctPmIds = [
     ...new Set(items.map((it: { paymentMethodId?: number | null }) => it.paymentMethodId ?? null)),
-  ];
+  ] as (number | null)[];
   for (const pmId of distinctPmIds) {
-    if (await isPaymentMethodLocked(record.id, pmId as number | null)) {
+    if (!(await owns(userId, "paymentMethod", pmId))) return badReference();
+    if (await isPaymentMethodLocked(record.id, pmId)) {
       return NextResponse.json(
         { error: "Payment method ถูกตรวจสอบแล้ว ไม่สามารถเพิ่มรายการได้" },
         { status: 403 },
       );
     }
+  }
+
+  const distinctBankIds = [
+    ...new Set(items.map((it: { bankAccountId?: number | null }) => it.bankAccountId || null)),
+  ] as (number | null)[];
+  for (const bankId of distinctBankIds) {
+    if (!(await owns(userId, "bankAccount", bankId))) return badReference();
   }
 
   const created = await prisma.$transaction(
@@ -50,6 +63,7 @@ export async function POST(
     }) =>
       prisma.expense.create({
         data: {
+          userId,
           monthlyRecordId: record.id,
           name: it.name,
           jarCode: it.jarCode,

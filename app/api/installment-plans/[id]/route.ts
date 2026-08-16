@@ -1,5 +1,7 @@
 import { NextResponse } from "next/server";
 import { prisma } from "@/lib/db";
+import { badReference, currentUserId, notFound, scopedWrite, unauthorized } from "@/lib/auth";
+import { owns } from "@/lib/ownership";
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const db = prisma as any;
@@ -43,6 +45,9 @@ export async function PATCH(
   request: Request,
   { params }: { params: { id: string } }
 ) {
+  const userId = await currentUserId();
+  if (userId === null) return unauthorized();
+
   const id = parseInt(params.id);
   const body = await request.json();
   const {
@@ -57,6 +62,7 @@ export async function PATCH(
     note,
   } = body;
   const pmIdNorm: number | null = paymentMethodId ?? null;
+  if (!(await owns(userId, "paymentMethod", pmIdNorm))) return badReference();
 
   const n = parseInt(totalInstallments);
   const principal = parseFloat(principalAmount);
@@ -67,8 +73,8 @@ export async function PATCH(
   const startYear = startDateParsed.getUTCFullYear();
   const startMonth = startDateParsed.getUTCMonth();
 
-  const existing = await db.installmentPlan.findUnique({
-    where: { id },
+  const existing = await db.installmentPlan.findFirst({
+    where: { id, userId },
     include: {
       items: {
         include: { _count: { select: { expenses: true } } },
@@ -106,7 +112,7 @@ export async function PATCH(
   }
 
   await db.installmentPlan.update({
-    where: { id },
+    where: { id, userId },
     data: {
       name: newName,
       jarCode: newJarCode,
@@ -148,6 +154,7 @@ export async function PATCH(
     } else {
       await db.recurringExpense.create({
         data: {
+          userId,
           name: newName,
           jarCode: newJarCode,
           amount: amounts[i],
@@ -178,6 +185,12 @@ export async function DELETE(
   _req: Request,
   { params }: { params: { id: string } }
 ) {
-  await db.installmentPlan.delete({ where: { id: parseInt(params.id) } });
+  const userId = await currentUserId();
+  if (userId === null) return unauthorized();
+
+  const deleted = await scopedWrite(() =>
+    db.installmentPlan.delete({ where: { id: parseInt(params.id), userId } })
+  );
+  if (!deleted) return notFound();
   return NextResponse.json({ ok: true });
 }
