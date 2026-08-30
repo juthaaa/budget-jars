@@ -446,6 +446,10 @@ model Expense {
   monthlyRecord      MonthlyRecord     @relation(fields: [monthlyRecordId], references: [id], onDelete: Cascade)
   name               String
   jarCode            String
+  // "expense" = รายจ่ายปกติ (หักงบ Jar) | "withdrawal" = รายการเบิก: จ่ายผ่าน
+  // payment method จริงจึงรวมในยอดโอน แต่ไม่กินงบ Jar เพราะจะได้เงินคืนภายหลัง
+  // รายการเบิกเก็บ jarCode = "" เสมอ (บังคับที่ชั้น API)
+  kind               String            @default("expense")
   amount             Float
   isLocked           Boolean           @default(false)
   bankAccountId      Int?

@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { isPaymentMethodLocked } from "@/lib/settlement-lock";
 import { badReference, currentUserId, unauthorized } from "@/lib/auth";
 import { owns } from "@/lib/ownership";
+import { normalizeExpenseKind } from "@/lib/expense-kind";
 
 function parseYearMonth(ym: string) {
   const [y, m] = ym.split("-");
@@ -60,13 +61,16 @@ export async function POST(
       name: string; jarCode: string; amount: string | number;
       bankAccountId?: number | null; note?: string | null;
       expenseDate?: string | null; paymentMethodId?: number | null;
-    }) =>
-      prisma.expense.create({
+      kind?: string;
+    }) => {
+      const { kind, jarCode } = normalizeExpenseKind(it.kind, it.jarCode);
+      return prisma.expense.create({
         data: {
           userId,
           monthlyRecordId: record.id,
           name: it.name,
-          jarCode: it.jarCode,
+          jarCode,
+          kind,
           amount: parseFloat(String(it.amount)),
           bankAccountId: it.bankAccountId || null,
           note: it.note || null,
@@ -74,8 +78,8 @@ export async function POST(
           paymentMethodId: it.paymentMethodId ?? null,
         },
         include: { bankAccount: true, paymentMethod: { select: { id: true, name: true } } },
-      }),
-    ),
+      });
+    }),
   );
 
   // Single-object callers expect a single record; bulk callers get the array.

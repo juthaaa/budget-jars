@@ -38,12 +38,19 @@ interface PaymentMethod {
 }
 
 interface Expense {
-  id: number; name: string; jarCode: string; amount: number;
+  id: number; name: string; jarCode: string; kind: string; amount: number;
   isLocked: boolean;
   note: string | null; bankAccount: BankAccount | null;
   paymentMethod: { id: number; name: string } | null;
   recurringExpense: RecurringRef | null;
 }
+
+// Sentinel used only in the Jar <select>s below — never sent to the API as a
+// jarCode. Picking it means "รายการเบิก": paid via a real payment method (so
+// it still counts toward that method's total) but excluded from every jar's
+// spent total because the money comes back later.
+const WITHDRAW_CODE = "__WITHDRAW__";
+const isWithdrawal = (e: { kind: string }) => e.kind === "withdrawal";
 
 type DraftRow = { name: string; jarCode: string; amount: string; paymentMethodId: string; note: string };
 const emptyRow = (): DraftRow => ({ name: "", jarCode: "NEC", amount: "", paymentMethodId: "", note: "" });
@@ -56,7 +63,9 @@ type ColKey = typeof COLS[number];
 function coerceCell(key: ColKey, raw: string, jars: Jar[], paymentMethods: PaymentMethod[]): string {
   const v = raw.trim();
   if (key === "jarCode") {
-    const j = jars.find((jj) => jj.code.toLowerCase() === v.toLowerCase());
+    const lower = v.toLowerCase();
+    if (lower === "เบิก" || lower === "withdraw" || lower === "withdrawal") return WITHDRAW_CODE;
+    const j = jars.find((jj) => jj.code.toLowerCase() === lower);
     return j ? j.code : v.toUpperCase();
   }
   if (key === "paymentMethodId") {
@@ -201,13 +210,20 @@ export default function MonthDetailPage() {
     const jarOrderMap = new Map(jars.map(j => [j.code, j.sortOrder]));
 
     const keyOf = (exp: Expense) =>
-      groupBy === "jar" ? exp.jarCode : (exp.paymentMethod ? `pm:${exp.paymentMethod.id}` : "pm:none");
+      groupBy === "jar"
+        ? (isWithdrawal(exp) ? "kind:withdrawal" : exp.jarCode)
+        : (exp.paymentMethod ? `pm:${exp.paymentMethod.id}` : "pm:none");
 
     const labelOf = (exp: Expense) =>
-      groupBy === "jar" ? exp.jarCode : (exp.paymentMethod?.name ?? "ไม่ระบุ");
+      groupBy === "jar"
+        ? (isWithdrawal(exp) ? "เบิก" : exp.jarCode)
+        : (exp.paymentMethod?.name ?? "ไม่ระบุ");
 
     const sortOrderOf = (exp: Expense) => {
-      if (groupBy === "jar") return jarOrderMap.get(exp.jarCode) ?? 9999;
+      if (groupBy === "jar") {
+        if (isWithdrawal(exp)) return 10000; // always last
+        return jarOrderMap.get(exp.jarCode) ?? 9999;
+      }
       if (!exp.paymentMethod) return 9999;
       const pm = paymentMethods.find(p => p.id === exp.paymentMethod!.id);
       return pm?.sortOrder ?? 9999;
@@ -376,9 +392,15 @@ export default function MonthDetailPage() {
 
   function getJarSpent(jarCode: string) {
     return (record?.expenses || [])
-      .filter((e) => e.jarCode === jarCode)
+      .filter((e) => e.jarCode === jarCode && !isWithdrawal(e))
       .reduce((s, e) => s + e.amount, 0);
   }
+
+  // รายการเบิก: จ่ายผ่าน payment method จริงจึงยังต้องโอนเงิน แต่ไม่กินงบ Jar
+  // ไหนเลย — ทำให้ยอดที่ต้องโอนสูงกว่ายอดจัดสรร Jar อยู่พอดีจำนวนนี้
+  const totalWithdrawal = (record?.expenses ?? [])
+    .filter(isWithdrawal)
+    .reduce((s, e) => s + e.amount, 0);
 
   const totalNonNecPct = jars
     .filter((j) => !j.isNec)
@@ -450,7 +472,8 @@ export default function MonthDetailPage() {
     });
   })();
   const totalTransfer = bankSummary.reduce((s, r) => s + r.total, 0);
-  // Sum of all jar allocations incl NEC — must equal totalTransfer (invariant)
+  // Sum of all jar allocations incl NEC. Invariant: totalTransfer ==
+  // totalAllocated + totalWithdrawal (รายการเบิกไม่หัก Jar แต่ยังต้องโอนจริง)
   const totalAllocated = jars.reduce((s, j) => s + calcJarAmount(j), 0);
   const necJarLocked = jars.some((j) => j.isNec && lockedJarIds.has(j.id));
 
@@ -625,7 +648,8 @@ export default function MonthDetailPage() {
       alert("รายการนี้อยู่ใน payment method ที่ตรวจสอบแล้ว ไม่สามารถแก้ไขได้");
       return;
     }
-    setEditingExpense(exp); setExpName(exp.name); setExpJarCode(exp.jarCode);
+    setEditingExpense(exp); setExpName(exp.name);
+    setExpJarCode(isWithdrawal(exp) ? WITHDRAW_CODE : exp.jarCode);
     setExpAmount(String(exp.amount));
     setExpNote(exp.note || "");
     setExpPaymentMethodId(exp.paymentMethod ? String(exp.paymentMethod.id) : "");
@@ -644,11 +668,14 @@ export default function MonthDetailPage() {
   async function saveEditExpense() {
     if (!editingExpense || !expName || !expAmount) return;
     setSavingExp(true);
+    const isWithdraw = expJarCode === WITHDRAW_CODE;
     const res = await fetch(`/api/expenses/${editingExpense.id}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        name: expName, jarCode: expJarCode, amount: expAmount,
+        name: expName, jarCode: isWithdraw ? "" : expJarCode,
+        kind: isWithdraw ? "withdrawal" : "expense",
+        amount: expAmount,
         bankAccountId: null, note: expNote,
         paymentMethodId: expPaymentMethodId ? parseInt(expPaymentMethodId) : null,
       }),
@@ -672,14 +699,18 @@ export default function MonthDetailPage() {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        items: rows.map((r) => ({
-          name: r.name.trim(),
-          jarCode: r.jarCode,
-          amount: r.amount,
-          bankAccountId: null,
-          note: r.note || null,
-          paymentMethodId: r.paymentMethodId ? parseInt(r.paymentMethodId) : null,
-        })),
+        items: rows.map((r) => {
+          const isWithdraw = r.jarCode === WITHDRAW_CODE;
+          return {
+            name: r.name.trim(),
+            jarCode: isWithdraw ? "" : r.jarCode,
+            kind: isWithdraw ? "withdrawal" : "expense",
+            amount: r.amount,
+            bankAccountId: null,
+            note: r.note || null,
+            paymentMethodId: r.paymentMethodId ? parseInt(r.paymentMethodId) : null,
+          };
+        }),
       }),
     });
     if (!res.ok) {
@@ -696,10 +727,11 @@ export default function MonthDetailPage() {
         seen.add(key);
         const alreadyExists = masters.some((m) => m.name.toLowerCase() === key);
         if (!alreadyExists) {
+          const isWithdraw = r.jarCode === WITHDRAW_CODE;
           await fetch("/api/expense-master", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name: r.name.trim(), defaultJarCode: r.jarCode || null }),
+            body: JSON.stringify({ name: r.name.trim(), defaultJarCode: isWithdraw ? null : (r.jarCode || null) }),
           });
         }
       }
@@ -1095,6 +1127,12 @@ export default function MonthDetailPage() {
           <span className="font-medium text-indigo-800">รวมจัดสรรทั้งหมด (รวม NEC)</span>
           <span className="font-bold text-indigo-700">{formatTHB(totalAllocated)}</span>
         </div>
+        {totalWithdrawal !== 0 && (
+          <div className="px-5 py-2 bg-amber-50 border-t border-amber-100 flex items-center justify-between text-xs">
+            <span className="text-amber-700">+ เบิก (ไม่หัก Jar)</span>
+            <span className="font-medium text-amber-700">{formatTHB(totalWithdrawal)}</span>
+          </div>
+        )}
         </>
         )}
 
@@ -1189,6 +1227,20 @@ export default function MonthDetailPage() {
               })}
             </tbody>
             <tfoot className="bg-gray-50 text-sm font-semibold">
+              {totalWithdrawal !== 0 && (
+                <>
+                  <tr className="font-normal text-xs text-gray-500">
+                    <td className="px-4 py-1.5" colSpan={2}>จัดสรร Jar ทั้งหมด</td>
+                    <td className="px-3 py-1.5 text-right">{formatTHB(totalAllocated)}</td>
+                    <td />
+                  </tr>
+                  <tr className="font-normal text-xs text-amber-700">
+                    <td className="px-4 py-1.5" colSpan={2}>+ เบิก (ได้คืนภายหลัง)</td>
+                    <td className="px-3 py-1.5 text-right">{formatTHB(totalWithdrawal)}</td>
+                    <td />
+                  </tr>
+                </>
+              )}
               <tr>
                 <td className="px-4 py-3 text-gray-700" colSpan={2}>รวมต้องโอนทั้งหมด</td>
                 <td className="px-3 py-3 text-right text-indigo-700">{formatTHB(totalTransfer)}</td>
@@ -1314,7 +1366,11 @@ export default function MonthDetailPage() {
                         )}
                       </td>
                       <td className="px-3 py-2.5">
-                        <span className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded text-xs font-medium">{exp.jarCode}</span>
+                        {isWithdrawal(exp) ? (
+                          <span className="bg-amber-100 text-amber-700 px-2 py-0.5 rounded text-xs font-medium">เบิก</span>
+                        ) : (
+                          <span className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded text-xs font-medium">{exp.jarCode}</span>
+                        )}
                       </td>
                       <td className="px-3 py-2.5 text-xs text-gray-600">
                         {exp.paymentMethod?.name ?? <span className="text-gray-300">—</span>}
@@ -1441,7 +1497,11 @@ export default function MonthDetailPage() {
                                     )}
                                   </td>
                                   <td className="px-3 py-2.5">
-                                    <span className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded text-xs font-medium">{exp.jarCode}</span>
+                                    {isWithdrawal(exp) ? (
+                          <span className="bg-amber-100 text-amber-700 px-2 py-0.5 rounded text-xs font-medium">เบิก</span>
+                        ) : (
+                          <span className="bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded text-xs font-medium">{exp.jarCode}</span>
+                        )}
                                   </td>
                                   <td className="px-3 py-2.5 text-xs text-gray-600">
                                     {exp.paymentMethod?.name ?? <span className="text-gray-300">—</span>}
@@ -1478,6 +1538,13 @@ export default function MonthDetailPage() {
                   </td>
                   <td colSpan={2} />
                 </tr>
+                {totalWithdrawal !== 0 && (
+                  <tr className="font-normal text-xs text-amber-700">
+                    <td className="px-4 py-1.5" colSpan={3}>— ในนี้เป็นรายการเบิก (ไม่หัก Jar)</td>
+                    <td className="px-3 py-1.5 text-right">{formatNum(totalWithdrawal)}</td>
+                    <td colSpan={2} />
+                  </tr>
+                )}
               </tfoot>
             </table>
           )}
@@ -1597,6 +1664,7 @@ export default function MonthDetailPage() {
                     {jars.map((j) => (
                       <option key={j.code} value={j.code}>{j.code} — {j.name}</option>
                     ))}
+                    <option value={WITHDRAW_CODE}>— เบิก (ไม่หัก Jar) —</option>
                   </select>
                 </label>
                 <label className="block">
@@ -1710,6 +1778,7 @@ export default function MonthDetailPage() {
                           {jars.map((j) => (
                             <option key={j.code} value={j.code}>{j.code}</option>
                           ))}
+                          <option value={WITHDRAW_CODE}>เบิก</option>
                         </select>
                         {Handle(1)}
                       </td>

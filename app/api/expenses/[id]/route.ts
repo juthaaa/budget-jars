@@ -3,6 +3,7 @@ import { prisma } from "@/lib/db";
 import { isPaymentMethodLocked } from "@/lib/settlement-lock";
 import { badReference, currentUserId, notFound, unauthorized } from "@/lib/auth";
 import { owns } from "@/lib/ownership";
+import { normalizeExpenseKind } from "@/lib/expense-kind";
 
 export async function PATCH(
   request: Request,
@@ -70,11 +71,13 @@ export async function PATCH(
     return badReference();
   }
 
+  const { kind, jarCode } = normalizeExpenseKind(body.kind, body.jarCode);
   const expense = await prisma.expense.update({
     where: { id },
     data: {
       name: body.name,
-      jarCode: body.jarCode,
+      jarCode,
+      kind,
       amount: parseFloat(body.amount),
       bankAccountId,
       note: body.note || null,
