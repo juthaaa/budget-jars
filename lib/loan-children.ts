@@ -29,6 +29,7 @@
 // handed to the first un-seeded installment reflects what was really
 // charged - an MRR change or a newly-recorded past prepayment can never
 // retroactively falsify a month that already happened.
+import { Prisma } from "@prisma/client";
 import {
   buildSchedule,
   type ActualInstallment,
@@ -170,6 +171,11 @@ export async function recalcLoanChildren(tx: any, userId: number, planId: number
   };
   const toCreate: NewChild[] = [];
   const stalePrepayIds: number[] = [];
+  // Collected instead of awaited one-by-one: against a remote DB (Turso),
+  // hundreds of sequential round trips inside one interactive transaction
+  // can outrun Prisma's 5s transaction timeout on a long loan term. Applied
+  // as a handful of batched CASE-based UPDATE statements after the loop.
+  const toUpdate: { id: number; amount: number; date: Date; kind: string }[] = [];
   let updated = 0;
   let created = 0;
 
@@ -189,10 +195,7 @@ export async function recalcLoanChildren(tx: any, userId: number, planId: number
 
     const instAmount = round2(row.payment);
     if (instChild) {
-      await tx.recurringExpense.update({
-        where: { id: instChild.id },
-        data: { amount: instAmount, startDate: d, endDate: d, loanItemKind: "installment" },
-      });
+      toUpdate.push({ id: instChild.id, amount: instAmount, date: d, kind: "installment" });
       updated++;
     } else {
       toCreate.push({
@@ -223,10 +226,7 @@ export async function recalcLoanChildren(tx: any, userId: number, planId: number
     if (row.extra > 0) {
       const extraAmount = round2(row.extra);
       if (prepayChild) {
-        await tx.recurringExpense.update({
-          where: { id: prepayChild.id },
-          data: { amount: extraAmount, startDate: d, endDate: d, loanItemKind: "prepay" },
-        });
+        toUpdate.push({ id: prepayChild.id, amount: extraAmount, date: d, kind: "prepay" });
         updated++;
       } else {
         toCreate.push({
@@ -251,6 +251,30 @@ export async function recalcLoanChildren(tx: any, userId: number, planId: number
       // the un-seeded prepay child is stale.
       stalePrepayIds.push(prepayChild.id);
     }
+  }
+
+  for (const chunk of chunksOf(toUpdate, 200)) {
+    await tx.$executeRaw(Prisma.sql`
+      UPDATE "RecurringExpense"
+      SET
+        amount = CASE id ${Prisma.join(
+          chunk.map((u) => Prisma.sql`WHEN ${u.id} THEN ${u.amount}`),
+          " "
+        )} END,
+        startDate = CASE id ${Prisma.join(
+          chunk.map((u) => Prisma.sql`WHEN ${u.id} THEN ${u.date}`),
+          " "
+        )} END,
+        endDate = CASE id ${Prisma.join(
+          chunk.map((u) => Prisma.sql`WHEN ${u.id} THEN ${u.date}`),
+          " "
+        )} END,
+        loanItemKind = CASE id ${Prisma.join(
+          chunk.map((u) => Prisma.sql`WHEN ${u.id} THEN ${u.kind}`),
+          " "
+        )} END
+      WHERE id IN (${Prisma.join(chunk.map((u) => u.id))})
+    `);
   }
 
   for (const chunk of chunksOf(toCreate, 100)) {

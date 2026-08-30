@@ -261,7 +261,7 @@ export async function PATCH(request: Request, { params }: { params: { id: string
     }
 
     return recalcLoanChildren(tx, userId, id);
-  });
+  }, { timeout: 15000 });
 
   return NextResponse.json({ ok: true, ...recalc });
 }

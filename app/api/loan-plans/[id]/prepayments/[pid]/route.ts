@@ -64,7 +64,7 @@ export async function PATCH(
       },
     });
     return recalcLoanChildren(tx, userId, planId);
-  });
+  }, { timeout: 15000 });
 
   return NextResponse.json({ ok: true, recalc });
 }
@@ -86,7 +86,7 @@ export async function DELETE(
   const recalc = await db.$transaction(async (tx: typeof db) => {
     await tx.loanPrepayment.delete({ where: { id: prepaymentId } });
     return recalcLoanChildren(tx, userId, planId);
-  });
+  }, { timeout: 15000 });
 
   return NextResponse.json({ ok: true, recalc });
 }

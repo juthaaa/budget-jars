@@ -277,7 +277,7 @@ export async function POST(request: Request) {
         items: { orderBy: { installmentNumber: "asc" } },
       },
     });
-  });
+  }, { timeout: 15000 });
 
   return NextResponse.json(plan, { status: 201 });
 }

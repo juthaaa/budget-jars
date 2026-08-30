@@ -63,7 +63,7 @@ export async function POST(request: Request, { params }: { params: { id: string 
     });
     const recalc = await recalcLoanChildren(tx, userId, planId);
     return { created, recalc };
-  });
+  }, { timeout: 15000 });
 
   return NextResponse.json({ prepayment: result.created, recalc: result.recalc }, { status: 201 });
 }
