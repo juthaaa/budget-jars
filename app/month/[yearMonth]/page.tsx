@@ -78,6 +78,7 @@ interface SeedCandidate {
   note: string | null;
   installmentNumber: number | null;
   totalInstallments: number | null;
+  loanItemKind: string | null;
 }
 
 interface DeductionItem {
@@ -1526,7 +1527,12 @@ export default function MonthDetailPage() {
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <span className="text-sm font-medium text-gray-800 truncate">{c.name}</span>
-                          {c.installmentNumber != null && (
+                          {c.installmentNumber != null && c.loanItemKind === "prepay" && (
+                            <span className="text-xs bg-green-100 text-green-700 px-1.5 py-0.5 rounded font-medium">
+                              โปะ งวด {c.installmentNumber}
+                            </span>
+                          )}
+                          {c.installmentNumber != null && c.loanItemKind !== "prepay" && (
                             <span className="text-xs bg-orange-100 text-orange-700 px-1.5 py-0.5 rounded font-medium">
                               งวด {c.installmentNumber}/{c.totalInstallments}
                             </span>

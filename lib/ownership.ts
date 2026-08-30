@@ -13,6 +13,7 @@ type OwnedModel =
   | "expenseMaster"
   | "recurringExpense"
   | "installmentPlan"
+  | "loanPlan"
   | "monthlyRecord";
 
 /** True when `id` references nothing (null/undefined) or a row owned by `userId`. */

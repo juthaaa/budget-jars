@@ -18,9 +18,12 @@ type RecurringRow = {
   amount: number;
   paymentMethodId: number | null;
   installmentNumber: number | null;
+  loanPlanId: number | null;
+  loanItemKind: string | null;
   note: string | null;
   paymentMethod: { id: number; name: string } | null;
   installmentPlan: { note: string | null; totalInstallments: number } | null;
+  loanPlan: { note: string | null; termMonths: number } | null;
 };
 
 // Recurring items active in this month (by startDate/endDate window) that have not yet
@@ -41,6 +44,7 @@ async function findCandidates(
     include: {
       paymentMethod: { select: { id: true, name: true } },
       installmentPlan: { select: { note: true, totalInstallments: true } },
+      loanPlan: { select: { note: true, termMonths: true } },
     },
     orderBy: [{ sortOrder: "asc" }, { id: "asc" }],
   });
@@ -81,9 +85,10 @@ export async function GET(
       amount: r.amount,
       paymentMethodId: r.paymentMethod?.id ?? null,
       paymentMethodName: r.paymentMethod?.name ?? null,
-      note: r.note ?? r.installmentPlan?.note ?? null,
+      note: r.note ?? r.installmentPlan?.note ?? r.loanPlan?.note ?? null,
       installmentNumber: r.installmentNumber,
-      totalInstallments: r.installmentPlan?.totalInstallments ?? null,
+      totalInstallments: r.installmentPlan?.totalInstallments ?? r.loanPlan?.termMonths ?? null,
+      loanItemKind: r.loanItemKind,
     })),
   );
 }
@@ -146,8 +151,11 @@ export async function POST(
         amount: r.amount,
         paymentMethodId: r.paymentMethodId,
         bankAccountId: null,
-        note: r.note ?? r.installmentPlan?.note ?? null,
+        note: r.note ?? r.installmentPlan?.note ?? r.loanPlan?.note ?? null,
         recurringExpenseId: r.id,
+        // See app/api/months/route.ts's auto-seed for why only the loan's
+        // scheduled-payment child locks and its prepay sibling doesn't.
+        isLocked: r.loanPlanId !== null && r.loanItemKind !== "prepay",
       })),
     });
   }

@@ -7,6 +7,7 @@
     "build": "prisma generate && next build",
     "start": "next start",
     "lint": "next lint",
+    "test:loan": "tsx scripts/test-loan-schedule.ts",
     "postinstall": "prisma generate"
   },
   "dependencies": {

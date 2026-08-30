@@ -19,7 +19,7 @@ export async function GET() {
   if (userId === null) return unauthorized();
 
   const items = await db.recurringExpense.findMany({
-    where: { userId, installmentPlanId: null },
+    where: { userId, installmentPlanId: null, loanPlanId: null },
     include: {
       paymentMethod: { select: { id: true, name: true } },
       _count: { select: { expenses: true } },

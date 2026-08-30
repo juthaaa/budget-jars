@@ -32,6 +32,10 @@ model User {
   bankAccounts       BankAccount[]
   expenseMasters     ExpenseMaster[]
   installmentPlans   InstallmentPlan[]
+  loanPlans          LoanPlan[]
+  loanRateBands      LoanRateBand[]
+  loanPrepayments    LoanPrepayment[]
+  loanReferenceRates LoanReferenceRate[]
   recurringExpenses  RecurringExpense[]
   jars               Jar[]
   monthlyRecords     MonthlyRecord[]
@@ -100,6 +104,128 @@ model InstallmentPlan {
   @@index([userId])
 }
 
+// A home/car loan with a stepped-rate schedule (fixed bands + reference-rate
+// linked bands, e.g. MRR/MLR/MOR ± spread) and optional prepayment ("โปะ").
+// Generic across banks — every rate is config, nothing about MRTA or any
+// specific promotion is hardcoded. See lib/loan-schedule.ts for the pure
+// calculation engine and source/CLAUDE.md's "Loan Plan System" section for
+// the full data-flow writeup.
+//
+// Like InstallmentPlan, this owns N child RecurringExpense rows (one per
+// installment, reusing installmentNumber) rather than a bespoke child table —
+// Expense.recurringExpenseId is the only "already seeded" sentinel the rest
+// of the system understands, and reusing it is what makes the monthly
+// auto-seed path, the settlement lock, and the seeded/unseeded edit lock all
+// work for free.
+model LoanPlan {
+  id              Int            @id @default(autoincrement())
+  userId          Int
+  user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  name            String
+  jarCode         String
+  paymentMethodId Int?
+  paymentMethod   PaymentMethod? @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
+
+  principalAmount  Float
+  termMonths       Int
+  startDate        DateTime // วันที่เริ่มสัญญา/เบิกเงินกู้ — can be any day of month
+  // Due date of installment #1; every later installment falls on the same
+  // day-of-month, one calendar month apart. Null = defaults to exactly one
+  // month after startDate (no stub period). When it doesn't line up with
+  // startDate + 1 month, the gap becomes a short/long first period whose
+  // interest is prorated by actual days instead of the usual ÷12
+  // approximation — see lib/loan-schedule.ts's stub-period handling.
+  firstPaymentDate DateTime?
+
+  interestMode String @default("monthly") // monthly (÷12) | daily (×days/365)
+
+  // Optional monthly fee riding alongside the loan (e.g. MRTA credit-life
+  // insurance) — deliberately generic, not principal/interest on the loan
+  // itself. Materialized as its own plain RecurringExpense (see
+  // monthlyFeeRecurringExpenseId) so it shows up normally on
+  // /recurring-expenses/manage instead of polluting the amortization math.
+  monthlyFeeAmount             Float?
+  monthlyFeeMonths             Int?
+  monthlyFeeRecurringExpenseId Int?   @unique
+
+  note      String?
+  sortOrder Int      @default(0)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  bands          LoanRateBand[]
+  prepayments    LoanPrepayment[]
+  referenceRates LoanReferenceRate[]
+  items          RecurringExpense[]
+
+  @@index([userId])
+}
+
+// A time-varying reference rate (MRR/MLR/MOR/…) used by ref_spread bands.
+// Stored as a timeline, not a single value, so it can be updated yearly (or
+// whenever the bank actually moves it) without losing the history that past
+// installments were priced against.
+model LoanReferenceRate {
+  id            Int      @id @default(autoincrement())
+  userId        Int
+  user          User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  loanPlanId    Int
+  loanPlan      LoanPlan @relation(fields: [loanPlanId], references: [id], onDelete: Cascade)
+  code          String // "MRR" | "MLR" | "MOR" | user-defined
+  value         Float
+  effectiveFrom DateTime
+  isAssumption  Boolean  @default(false) // true = user-entered future guess, not an observed rate
+  note          String?
+
+  @@index([userId])
+  @@index([loanPlanId, code, effectiveFrom])
+}
+
+// One rung of the stepped-rate ladder. rateType "absolute" uses `value`
+// directly; "ref_spread" adds `value` (usually negative) to whichever
+// LoanReferenceRate.code = refCode is effective on a given installment's due
+// date. paymentOverride pins the monthly payment to what the bank actually
+// quotes (PAYDEF-style) for that band; when left null the engine falls back
+// to computing PMT off the balance at band start over the months remaining
+// to the end of the contract.
+model LoanRateBand {
+  id              Int      @id @default(autoincrement())
+  userId          Int
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  loanPlanId      Int
+  loanPlan        LoanPlan @relation(fields: [loanPlanId], references: [id], onDelete: Cascade)
+  fromInstallment Int // 1-based, inclusive
+  toInstallment   Int? // null = to end of term
+  rateType        String // absolute | ref_spread
+  refCode         String?
+  value           Float // absolute rate (2.49) or spread (-0.750)
+  paymentOverride Float?
+  label           String?
+  sortOrder       Int      @default(0)
+
+  @@index([userId])
+  @@index([loanPlanId, fromInstallment])
+}
+
+// A prepayment ("โปะ") applied on top of the scheduled payment. Multiple
+// rows can overlap (e.g. +1,000/month for installments 1-24 plus a one-off
+// 50,000 at installment 13) — the engine sums whatever covers a given month.
+model LoanPrepayment {
+  id              Int      @id @default(autoincrement())
+  userId          Int
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  loanPlanId      Int
+  loanPlan        LoanPlan @relation(fields: [loanPlanId], references: [id], onDelete: Cascade)
+  kind            String // recurring | one_off
+  fromInstallment Int
+  toInstallment   Int? // recurring only; null = until payoff
+  amount          Float
+  note            String?
+
+  @@index([userId])
+  @@index([loanPlanId, fromInstallment])
+}
+
 model RecurringExpense {
   id                Int              @id @default(autoincrement())
   userId            Int
@@ -118,6 +244,15 @@ model RecurringExpense {
   installmentPlanId Int?
   installmentPlan   InstallmentPlan? @relation(fields: [installmentPlanId], references: [id], onDelete: Cascade)
   installmentNumber Int?
+  loanPlanId        Int?
+  loanPlan          LoanPlan?        @relation(fields: [loanPlanId], references: [id], onDelete: Cascade)
+  // "installment" | "prepay" — null for anything that isn't a LoanPlan child.
+  // A loan installment owns up to two children with the same
+  // `installmentNumber`: the scheduled payment and (when the plan has a
+  // prepayment covering that month) the โปะ. They seed into the month as two
+  // separate Expense rows so a month where the prepayment wasn't actually made
+  // can have just that row deleted.
+  loanItemKind      String?
   expenses          Expense[]
 
   @@index([userId])
@@ -191,6 +326,7 @@ model PaymentMethod {
   expenses           Expense[]
   recurringExpenses  RecurringExpense[]
   installmentPlans   InstallmentPlan[]
+  loanPlans          LoanPlan[]
   monthlySettlements MonthlyPaymentSettlement[]
 
   @@unique([userId, code])

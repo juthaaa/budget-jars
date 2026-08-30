@@ -95,6 +95,7 @@ export async function POST(request: Request) {
     },
     include: {
       installmentPlan: { select: { note: true } },
+      loanPlan: { select: { note: true } },
     },
     orderBy: [{ sortOrder: "asc" }, { id: "asc" }],
   });
@@ -107,15 +108,18 @@ export async function POST(request: Request) {
     paymentMethodId: number | null;
     startDate: Date | null;
     installmentPlanId: number | null;
+    loanPlanId: number | null;
+    loanItemKind: string | null;
     intervalValue: number;
     intervalUnit: string;
     note: string | null;
     installmentPlan: { note: string | null } | null;
+    loanPlan: { note: string | null } | null;
   };
 
-  // Filter by interval for regular recurring (installment children rely on exact startDate=endDate)
+  // Filter by interval for regular recurring (installment/loan children rely on exact startDate=endDate)
   const filtered = allRecurring.filter((r: RecurringRow) => {
-    if (r.installmentPlanId !== null) return true;
+    if (r.installmentPlanId !== null || r.loanPlanId !== null) return true;
     if (!r.startDate) {
       const effectiveInterval = r.intervalUnit === "year" ? r.intervalValue * 12 : r.intervalValue;
       return ym % effectiveInterval === 0;
@@ -138,8 +142,14 @@ export async function POST(request: Request) {
         amount: r.amount,
         paymentMethodId: r.paymentMethodId,
         bankAccountId: null,
-        note: r.note ?? r.installmentPlan?.note ?? null,
+        note: r.note ?? r.installmentPlan?.note ?? r.loanPlan?.note ?? null,
         recurringExpenseId: r.id,
+        // A loan's scheduled-payment child seeds in locked (the user asked
+        // that a seeded installment be un-editable in the month, since
+        // fixing it means re-seeding, not hand-editing). Its prepay sibling
+        // seeds in unlocked, since deleting it back out is the normal way to
+        // record "no โปะ this month".
+        isLocked: r.loanPlanId !== null && r.loanItemKind !== "prepay",
       })),
     });
   }
